@@ -1,0 +1,6 @@
+{
+  "name": "Smart RFID Inventory Tracking",
+  "description": "A modern warehouse dashboard visually simulating and tracking RFID-tagged items.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
