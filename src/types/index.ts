@@ -19,6 +19,25 @@ export interface Zone {
   created_at: string;
 }
 
+export interface ItemVariant {
+  id: number;
+  item_id: number;
+  current_zone_id: number | null;
+  rfid_tag_code: string | null;
+  qty: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ItemImage {
+  id: number;
+  item_id: number;
+  url: string;
+  spec: string | null;
+  ev: string | null;
+  created_at: string;
+}
+
 export interface Item {
   id: number;
   name: string;
@@ -28,14 +47,16 @@ export interface Item {
   cost_price: number;
   sold_price: number;
   thumbnail: string | null;
-  rfid_tag_code: string;
+  rfid_tag_code: string | null;
   main_cat: string;
   sub_cat: string;
-  current_zone_id: number;
+  current_zone_id: number | null;
   status: string;
   created_at: string;
   updated_at: string;
-  label?: string; // mapping convenience
+  variants: ItemVariant[];
+  images: ItemImage[];
+  label?: string | null; // mapping convenience
 }
 
 export interface Reader {
