@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Search, ShoppingCart, BadgePercent, Clock3 } from 'lucide-react';
+import { Loader2, Search, ShoppingCart, BadgePercent, Clock3, PackageSearch, X } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
-import { Item, Order } from '../types';
+import { ItemVariant, Order } from '../types';
 import { deleteApiResource, postApiResource } from '@/lib/api';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,10 +17,12 @@ export default function Orders() {
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [notes, setNotes] = useState('');
-  const [selectedItemId, setSelectedItemId] = useState('');
+  const [itemSearch, setItemSearch] = useState('');
+  const [selectedOptionId, setSelectedOptionId] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [isCreating, setIsCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [isItemPickerOpen, setIsItemPickerOpen] = useState(false);
 
   useEffect(() => {
     void fetchOrders();
@@ -29,17 +31,82 @@ export default function Orders() {
 
   const isLoading = !loaded.orders || loading.orders;
   const isLoadingItems = !loaded.items || loading.items;
-  const availableItems = useMemo(() => {
-    return items.filter((item) => {
-      const variantQty = item.variants.reduce((sum, variant) => sum + (variant.qty || 0), 0);
-      return item.total_qty > 0 || variantQty > 0;
+  const itemOrderOptions = useMemo(() => {
+    return items.flatMap((item) => {
+      if (item.variants.length === 0) {
+        return [{
+          id: `item-${item.id}`,
+          item,
+          variant: null,
+          availableQty: item.total_qty,
+          label: item.name,
+          detail: `${item.sku || 'No SKU'} | ${item.total_qty} available | $${Number(item.sold_price || 0).toFixed(2)}`,
+          searchText: [
+            item.id,
+            item.name,
+            item.description,
+            item.sku,
+            item.nickname,
+            item.rfid_tag_code,
+            item.main_cat,
+            item.sub_cat,
+            item.status,
+          ].filter(Boolean).join(' ').toLowerCase(),
+        }];
+      }
+
+      return item.variants.map((variant) => {
+        const tagLabel = variant.rfid_tag_code ? `Tag ${variant.rfid_tag_code}` : `Variant #${variant.id}`;
+
+        return {
+          id: `variant-${variant.id}`,
+          item,
+          variant,
+          availableQty: variant.qty,
+          label: item.name,
+          detail: `${tagLabel} | ${variant.qty} available | ${item.sku || 'No SKU'} | $${Number(item.sold_price || 0).toFixed(2)}`,
+          searchText: [
+            item.id,
+            variant.id,
+            item.name,
+            item.description,
+            item.sku,
+            item.nickname,
+            item.rfid_tag_code,
+            variant.rfid_tag_code,
+            item.main_cat,
+            item.sub_cat,
+            item.status,
+          ].filter(Boolean).join(' ').toLowerCase(),
+        };
+      });
     });
   }, [items]);
+  const filteredItemOptions = useMemo(() => {
+    const query = itemSearch.trim().toLowerCase();
+    const sortedOptions = [...itemOrderOptions].sort((left, right) => {
+      if (left.availableQty !== right.availableQty) {
+        return right.availableQty - left.availableQty;
+      }
+
+      return left.label.localeCompare(right.label);
+    });
+
+    if (!query) {
+      return sortedOptions;
+    }
+
+    const terms = query.split(/\s+/).filter(Boolean);
+    return sortedOptions.filter((option) => terms.every((term) => option.searchText.includes(term)));
+  }, [itemOrderOptions, itemSearch]);
+  const selectedOrderOption = useMemo(() => {
+    return itemOrderOptions.find((option) => option.id === selectedOptionId) || null;
+  }, [itemOrderOptions, selectedOptionId]);
   const selectedItem = useMemo(() => {
-    return availableItems.find((item) => item.id === Number(selectedItemId)) || null;
-  }, [availableItems, selectedItemId]);
-  const selectedVariant = selectedItem?.variants.find((variant) => variant.qty > 0) || selectedItem?.variants[0] || null;
-  const selectedAvailableQty = selectedVariant?.qty ?? selectedItem?.total_qty ?? 0;
+    return selectedOrderOption?.item || null;
+  }, [selectedOrderOption]);
+  const selectedVariant = selectedOrderOption?.variant || null;
+  const selectedAvailableQty = selectedOrderOption?.availableQty ?? 0;
   const selectedUnitPrice = selectedItem?.sold_price ?? 0;
   const orderPreviewTotal = selectedUnitPrice * quantity;
 
@@ -50,11 +117,29 @@ export default function Orders() {
     }
 
     return orders.filter((order) => {
+      const orderItemsText = order.order_items
+        .map((orderItem) => [
+          orderItem.id,
+          orderItem.item_id,
+          orderItem.variant_id,
+          orderItem.quantity,
+          orderItem.unit_price,
+        ].filter(Boolean).join(' '))
+        .join(' ');
+      const searchableText = [
+        order.id,
+        order.customer_name,
+        order.customer_phone,
+        order.customer_address,
+        order.notes,
+        order.status,
+        order.total_items,
+        order.total_price,
+        orderItemsText,
+      ].filter(Boolean).join(' ').toLowerCase();
+
       return (
-        order.customer_name.toLowerCase().includes(query) ||
-        order.customer_phone.toLowerCase().includes(query) ||
-        order.customer_address.toLowerCase().includes(query) ||
-        String(order.id).includes(query)
+        query.split(/\s+/).filter(Boolean).every((term) => searchableText.includes(term))
       );
     });
   }, [orders, search]);
@@ -99,7 +184,8 @@ export default function Orders() {
       setPhone('');
       setAddress('');
       setNotes('');
-      setSelectedItemId('');
+      setSelectedOptionId('');
+      setItemSearch('');
       setQuantity(1);
       toast.success('Order created with item');
     } catch (error) {
@@ -203,26 +289,77 @@ export default function Orders() {
             <Input placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
             <Input placeholder="Address" value={address} onChange={(e) => setAddress(e.target.value)} />
             <Input placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
-            <select
-              className="h-8 w-full rounded-lg border border-input bg-background px-3 text-sm text-slate-900 outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 md:col-span-2"
-              value={selectedItemId}
-              onChange={(event) => {
-                setSelectedItemId(event.target.value);
-                setQuantity(1);
-              }}
-              disabled={isLoadingItems}
-            >
-              <option value="">{isLoadingItems ? 'Loading items...' : 'Select item'}</option>
-              {availableItems.map((item: Item) => {
-                const variantQty = item.variants.reduce((sum, variant) => sum + (variant.qty || 0), 0);
-                const availableQty = variantQty || item.total_qty;
-                return (
-                  <option key={item.id} value={item.id}>
-                    {item.name} | {availableQty} available | ${Number(item.sold_price || 0).toFixed(2)}
-                  </option>
-                );
-              })}
-            </select>
+            <div className="relative md:col-span-2">
+              <PackageSearch className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
+              <Input
+                className="pl-9 pr-9 bg-background"
+                placeholder={isLoadingItems ? 'Loading items...' : 'Search item, SKU, tag, category, or variant ID...'}
+                value={itemSearch}
+                onChange={(event) => {
+                  setItemSearch(event.target.value);
+                  setIsItemPickerOpen(true);
+                }}
+                onFocus={() => setIsItemPickerOpen(true)}
+                onBlur={() => window.setTimeout(() => setIsItemPickerOpen(false), 150)}
+                disabled={isLoadingItems}
+              />
+              {(selectedOrderOption || itemSearch) && (
+                <button
+                  type="button"
+                  className="absolute right-2 top-2 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setSelectedOptionId('');
+                    setItemSearch('');
+                    setQuantity(1);
+                    setIsItemPickerOpen(true);
+                  }}
+                  aria-label="Clear selected item"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+              {isItemPickerOpen && !isLoadingItems && (
+                <div className="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl">
+                  {filteredItemOptions.length > 0 ? filteredItemOptions.map((option) => {
+                    const isSelected = option.id === selectedOptionId;
+                    const isUnavailable = option.availableQty < 1;
+
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={`flex w-full flex-col gap-1 border-b border-slate-100 px-3 py-2 text-left last:border-b-0 ${isSelected ? 'bg-blue-50' : 'hover:bg-slate-50'} ${isUnavailable ? 'opacity-60' : ''}`}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          if (isUnavailable) {
+                            return;
+                          }
+
+                          setSelectedOptionId(option.id);
+                          setItemSearch(`${option.label} | ${option.detail}`);
+                          setQuantity(1);
+                          setIsItemPickerOpen(false);
+                        }}
+                        disabled={isUnavailable}
+                      >
+                        <span className="flex items-center justify-between gap-3 text-sm font-semibold text-slate-800">
+                          <span className="truncate">{option.label}</span>
+                          <span className={`shrink-0 text-xs ${isUnavailable ? 'text-red-600' : 'text-slate-500'}`}>
+                            {isUnavailable ? 'Out of stock' : `${option.availableQty} available`}
+                          </span>
+                        </span>
+                        <span className="line-clamp-2 text-xs text-slate-500">{option.detail}</span>
+                      </button>
+                    );
+                  }) : (
+                    <div className="px-3 py-6 text-center text-sm text-slate-500">
+                      No items match that search.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <Input
               min={1}
               max={Math.max(selectedAvailableQty, 1)}
@@ -236,8 +373,8 @@ export default function Orders() {
           <div className="mt-3 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
             <span>
               {selectedItem
-                ? `${selectedAvailableQty} available for ${selectedItem.name}`
-                : 'Choose an inventory item to include in the order.'}
+                ? `${selectedAvailableQty} available for ${selectedItem.name}${selectedVariant ? ` variant #${selectedVariant.id}` : ''}`
+                : 'Choose an item to include in the order.'}
             </span>
             {selectedItem && selectedAvailableQty < quantity && (
               <span className="font-medium text-red-600">Quantity is higher than available stock.</span>
