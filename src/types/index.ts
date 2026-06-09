@@ -50,6 +50,7 @@ export interface Item {
   rfid_tag_code: string | null;
   main_cat: string;
   sub_cat: string;
+  total_qty: number;
   current_zone_id: number | null;
   status: string;
   created_at: string;
@@ -141,8 +142,38 @@ export interface Alert {
   status: 'new' | 'reviewed' | 'resolved' | 'false_alarm';
 }
 
+export interface Employee {
+  id: number;
+  name: string;
+  email: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrderItem {
+  id: number;
+  order_id: number;
+  item_id: number;
+  variant_id: number | null;
+  quantity: number;
+  unit_price: number | null;
+  approved_physically: boolean | null;
+  qty_before: number;
+  qty_after: number;
+  created_at: string;
+}
+
 export interface Order {
-  id: string;
-  itemIds: number[];
+  id: number;
+  customer_name: string;
+  customer_phone: string;
+  customer_address: string;
+  notes: string | null;
+  total_items: number;
+  total_price: number;
   status: 'pending' | 'fulfilled' | 'cancelled';
+  order_items: OrderItem[];
+  created_at: string;
+  updated_at: string;
 }

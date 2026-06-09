@@ -1,12 +1,13 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { Item, Reader, RFIDEvent, Zone, Alert, Order, RpiDevice, ZoneSummary, RfidLiveSocketEvent } from '../types';
-import { mockItems, mockReaders, mockEvents, mockZones, mockAlerts, mockOrders, mockRpiDevices } from '../data/mockData';
+import { Item, Reader, RFIDEvent, Zone, Alert, Order, RpiDevice, ZoneSummary, RfidLiveSocketEvent, Employee } from '../types';
+import { mockItems, mockReaders, mockEvents, mockZones, mockAlerts, mockRpiDevices } from '../data/mockData';
 import { toast } from 'sonner';
 import { fetchApiResource } from '@/lib/api';
 import { getWebSocketUrl } from '../config';
 
-type InventoryResourceKey = 'items' | 'readers' | 'events' | 'zones' | 'zoneSummary' | 'rpiDevices';
+type InventoryResourceKey = 'items' | 'readers' | 'events' | 'zones' | 'zoneSummary' | 'rpiDevices' | 'orders' | 'employees';
 type InventoryResourceFlags = Record<InventoryResourceKey, boolean>;
+type InventoryResourceErrors = Record<InventoryResourceKey, string | null>;
 type LiveConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
 interface InventoryContextType {
@@ -17,9 +18,11 @@ interface InventoryContextType {
   zoneSummary: ZoneSummary | null;
   alerts: Alert[];
   orders: Order[];
+  employees: Employee[];
   rpiDevices: RpiDevice[];
   loading: InventoryResourceFlags;
   loaded: InventoryResourceFlags;
+  errors: InventoryResourceErrors;
   liveConnectionStatus: LiveConnectionStatus;
   simulateMovement: (itemId: number, targetZoneId: number) => void;
   simulateExit: (itemId: number) => void;
@@ -30,6 +33,8 @@ interface InventoryContextType {
   fetchZones: () => Promise<void>;
   fetchZoneSummary: () => Promise<void>;
   fetchRpiDevices: () => Promise<void>;
+  fetchOrders: () => Promise<void>;
+  fetchEmployees: () => Promise<void>;
   connectLiveEvents: () => void;
   disconnectLiveEvents: () => void;
 }
@@ -43,7 +48,24 @@ const initialResourceFlags: InventoryResourceFlags = {
   zones: false,
   zoneSummary: false,
   rpiDevices: false,
+  orders: false,
+  employees: false,
 };
+
+const initialResourceErrors: InventoryResourceErrors = {
+  items: null,
+  readers: null,
+  events: null,
+  zones: null,
+  zoneSummary: null,
+  rpiDevices: null,
+  orders: null,
+  employees: null,
+};
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
 
 export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [items, setItems] = useState<Item[]>([]);
@@ -52,10 +74,12 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [zones, setZones] = useState<Zone[]>([]);
   const [zoneSummary, setZoneSummary] = useState<ZoneSummary | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>(mockAlerts);
-  const [orders, setOrders] = useState<Order[]>(mockOrders);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [rpiDevices, setRpiDevices] = useState<RpiDevice[]>([]);
   const [loading, setLoading] = useState<InventoryResourceFlags>(initialResourceFlags);
   const [loaded, setLoaded] = useState<InventoryResourceFlags>(initialResourceFlags);
+  const [errors, setErrors] = useState<InventoryResourceErrors>(initialResourceErrors);
   const [liveConnectionStatus, setLiveConnectionStatus] = useState<LiveConnectionStatus>('disconnected');
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -66,8 +90,10 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     try {
       const data = await fetchApiResource<Item[]>('/items');
       setItems(data);
+      setErrors(prev => ({ ...prev, items: null }));
     } catch (e) {
       console.error("Failed to fetch items", e);
+      setErrors(prev => ({ ...prev, items: getErrorMessage(e, 'Failed to fetch items') }));
       setItems(mockItems);
     } finally {
       setLoading(prev => ({ ...prev, items: false }));
@@ -80,8 +106,10 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     try {
       const data = await fetchApiResource<Reader[]>('/rfid-readers');
       setReaders(data);
+      setErrors(prev => ({ ...prev, readers: null }));
     } catch (e) {
       console.error("Failed to fetch readers", e);
+      setErrors(prev => ({ ...prev, readers: getErrorMessage(e, 'Failed to fetch readers') }));
       setReaders(mockReaders);
     } finally {
       setLoading(prev => ({ ...prev, readers: false }));
@@ -94,8 +122,10 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     try {
       const data = await fetchApiResource<RFIDEvent[]>('/rfid/detections');
       setEvents(data);
+      setErrors(prev => ({ ...prev, events: null }));
     } catch (e) {
       console.error("Failed to fetch events", e);
+      setErrors(prev => ({ ...prev, events: getErrorMessage(e, 'Failed to fetch events') }));
       setEvents(mockEvents);
     } finally {
       setLoading(prev => ({ ...prev, events: false }));
@@ -108,8 +138,10 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     try {
       const data = await fetchApiResource<Zone[]>('/zones');
       setZones(data);
+      setErrors(prev => ({ ...prev, zones: null }));
     } catch (e) {
       console.error("Failed to fetch zones", e);
+      setErrors(prev => ({ ...prev, zones: getErrorMessage(e, 'Failed to fetch zones') }));
       setZones(mockZones);
     } finally {
       setLoading(prev => ({ ...prev, zones: false }));
@@ -122,8 +154,10 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     try {
       const data = await fetchApiResource<ZoneSummary>('/zones/summary');
       setZoneSummary(data);
+      setErrors(prev => ({ ...prev, zoneSummary: null }));
     } catch (e) {
       console.error("Failed to fetch zone summary", e);
+      setErrors(prev => ({ ...prev, zoneSummary: getErrorMessage(e, 'Failed to fetch zone summary') }));
       setZoneSummary(null);
     } finally {
       setLoading(prev => ({ ...prev, zoneSummary: false }));
@@ -136,12 +170,46 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     try {
       const data = await fetchApiResource<RpiDevice[]>('/rpi-devices');
       setRpiDevices(data);
+      setErrors(prev => ({ ...prev, rpiDevices: null }));
     } catch (e) {
       console.error("Failed to fetch rpi devices", e);
+      setErrors(prev => ({ ...prev, rpiDevices: getErrorMessage(e, 'Failed to fetch rpi devices') }));
       setRpiDevices(mockRpiDevices);
     } finally {
       setLoading(prev => ({ ...prev, rpiDevices: false }));
       setLoaded(prev => ({ ...prev, rpiDevices: true }));
+    }
+  }, []);
+
+  const fetchOrders = useCallback(async () => {
+    setLoading(prev => ({ ...prev, orders: true }));
+    try {
+      const data = await fetchApiResource<Order[]>('/orders');
+      setOrders(data);
+      setErrors(prev => ({ ...prev, orders: null }));
+    } catch (e) {
+      console.error("Failed to fetch orders", e);
+      setOrders([]);
+      setErrors(prev => ({ ...prev, orders: getErrorMessage(e, 'Failed to fetch orders') }));
+    } finally {
+      setLoading(prev => ({ ...prev, orders: false }));
+      setLoaded(prev => ({ ...prev, orders: true }));
+    }
+  }, []);
+
+  const fetchEmployees = useCallback(async () => {
+    setLoading(prev => ({ ...prev, employees: true }));
+    try {
+      const data = await fetchApiResource<Employee[]>('/employees');
+      setEmployees(data);
+      setErrors(prev => ({ ...prev, employees: null }));
+    } catch (e) {
+      console.error("Failed to fetch employees", e);
+      setEmployees([]);
+      setErrors(prev => ({ ...prev, employees: getErrorMessage(e, 'Failed to fetch employees') }));
+    } finally {
+      setLoading(prev => ({ ...prev, employees: false }));
+      setLoaded(prev => ({ ...prev, employees: true }));
     }
   }, []);
 
@@ -421,9 +489,11 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       zoneSummary,
       alerts,
       orders,
+      employees,
       rpiDevices,
       loading,
       loaded,
+      errors,
       liveConnectionStatus,
       simulateMovement,
       simulateExit,
@@ -434,6 +504,8 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       fetchZones,
       fetchZoneSummary,
       fetchRpiDevices,
+      fetchOrders,
+      fetchEmployees,
       connectLiveEvents,
       disconnectLiveEvents,
     }}>

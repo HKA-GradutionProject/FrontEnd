@@ -13,6 +13,8 @@ import Events from './pages/Events';
 import Items from './pages/Items';
 import Readers from './pages/Readers';
 import Alerts from './pages/Alerts';
+import Orders from './pages/Orders';
+import Employees from './pages/Employees';
 
 export default function App() {
   return (
@@ -25,6 +27,8 @@ export default function App() {
             <Route path="events" element={<Events />} />
             <Route path="items" element={<Items />} />
             <Route path="readers" element={<Readers />} />
+            <Route path="orders" element={<Orders />} />
+            <Route path="employees" element={<Employees />} />
             <Route path="alerts" element={<Alerts />} />
           </Route>
         </Routes>

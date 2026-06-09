@@ -14,22 +14,65 @@ async function readResponseBody(response: Response): Promise<unknown> {
   }
 }
 
-export async function fetchApiResource<T>(path: string): Promise<T> {
-  const url = `${API_BASE_URL}${path}`;
-  console.log(`[Inventory] GET ${path}`, { url });
+function getErrorMessage(path: string, method: string, status: number, data: unknown) {
+  if (typeof data === 'object' && data !== null && 'detail' in data) {
+    const detail = (data as { detail: unknown }).detail;
 
-  const response = await fetch(url);
+    if (typeof detail === 'string') {
+      return detail;
+    }
+  }
+
+  return `${method} ${path} failed with status ${status}`;
+}
+
+async function requestApiResource<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const method = options.method || 'GET';
+  const url = `${API_BASE_URL}${path}`;
+  console.log(`[Inventory] ${method} ${path}`, { url });
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...options.headers,
+    },
+  });
   const data = await readResponseBody(response);
 
-  console.log(`[Inventory] GET ${path} response`, {
+  console.log(`[Inventory] ${method} ${path} response`, {
     status: response.status,
     ok: response.ok,
     data,
   });
 
   if (!response.ok) {
-    throw new Error(`GET ${path} failed with status ${response.status}`);
+    throw new Error(getErrorMessage(path, method, response.status, data));
   }
 
   return data as T;
+}
+
+export async function fetchApiResource<T>(path: string): Promise<T> {
+  return requestApiResource<T>(path);
+}
+
+export async function postApiResource<T>(path: string, body: unknown): Promise<T> {
+  return requestApiResource<T>(path, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function patchApiResource<T>(path: string, body: unknown): Promise<T> {
+  return requestApiResource<T>(path, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteApiResource(path: string): Promise<void> {
+  await requestApiResource<null>(path, {
+    method: 'DELETE',
+  });
 }
