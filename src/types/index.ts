@@ -146,7 +146,11 @@ export interface Employee {
   id: number;
   name: string;
   email: string | null;
-  role?: 'admin' | 'operation' | 'security';
+  role: 'admin' | 'operation' | 'security';
+  phone: string | null;
+  job_title: string | null;
+  department: string | null;
+  notes: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;

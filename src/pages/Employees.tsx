@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Search, UserRound, ShieldCheck, ShieldX } from 'lucide-react';
+import { Loader2, Search, UserRound, ShieldCheck, ShieldX, Pencil } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { Employee } from '../types';
 import { deleteApiResource, patchApiResource, postApiResource } from '@/lib/api';
@@ -10,15 +10,30 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
+type EmployeeRole = Employee['role'];
+
 export default function Employees() {
   const { employees, fetchEmployees, loading, loaded, errors } = useInventory();
   const [search, setSearch] = useState('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [role, setRole] = useState<EmployeeRole>('operation');
+  const [phone, setPhone] = useState('');
+  const [jobTitle, setJobTitle] = useState('');
+  const [department, setDepartment] = useState('');
+  const [notes, setNotes] = useState('');
   const [password, setPassword] = useState('');
   const [savingId, setSavingId] = useState<number | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [editingEmployeeId, setEditingEmployeeId] = useState<number | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editRole, setEditRole] = useState<EmployeeRole>('operation');
+  const [editPhone, setEditPhone] = useState('');
+  const [editJobTitle, setEditJobTitle] = useState('');
+  const [editDepartment, setEditDepartment] = useState('');
+  const [editNotes, setEditNotes] = useState('');
 
   useEffect(() => {
     void fetchEmployees();
@@ -34,13 +49,18 @@ export default function Employees() {
     return employees.filter((employee) => {
       return (
         employee.name.toLowerCase().includes(query) ||
-        (employee.email ?? '').toLowerCase().includes(query)
+        (employee.email ?? '').toLowerCase().includes(query) ||
+        employee.role.toLowerCase().includes(query) ||
+        (employee.phone ?? '').toLowerCase().includes(query) ||
+        (employee.job_title ?? '').toLowerCase().includes(query) ||
+        (employee.department ?? '').toLowerCase().includes(query)
       );
     });
   }, [employees, search]);
 
   const activeEmployees = employees.filter((employee) => employee.is_active).length;
   const inactiveEmployees = employees.length - activeEmployees;
+  const editingEmployee = employees.find((employee) => employee.id === editingEmployeeId) ?? null;
 
   const hasEmployeeValidationError = !name.trim() || password.length < 8;
   const createDisabled = isCreating;
@@ -56,11 +76,21 @@ export default function Employees() {
       await postApiResource<Employee>('/employees', {
         name: name.trim(),
         email: email.trim() || null,
+        role,
+        phone: phone.trim() || null,
+        job_title: jobTitle.trim() || null,
+        department: department.trim() || null,
+        notes: notes.trim() || null,
         password,
       });
       await fetchEmployees();
       setName('');
       setEmail('');
+      setRole('operation');
+      setPhone('');
+      setJobTitle('');
+      setDepartment('');
+      setNotes('');
       setPassword('');
       toast.success('Employee created');
     } catch (error) {
@@ -100,6 +130,76 @@ export default function Employees() {
     } catch (error) {
       console.error('Update employee failed', error);
       toast.error(error instanceof Error ? error.message : 'Update employee failed');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const startEditing = (employee: Employee) => {
+    setEditingEmployeeId(employee.id);
+    setEditName(employee.name);
+    setEditEmail(employee.email ?? '');
+    setEditRole(employee.role);
+    setEditPhone(employee.phone ?? '');
+    setEditJobTitle(employee.job_title ?? '');
+    setEditDepartment(employee.department ?? '');
+    setEditNotes(employee.notes ?? '');
+  };
+
+  const cancelEditing = () => {
+    setEditingEmployeeId(null);
+    setEditName('');
+    setEditEmail('');
+    setEditRole('operation');
+    setEditPhone('');
+    setEditJobTitle('');
+    setEditDepartment('');
+    setEditNotes('');
+  };
+
+  const saveEmployeeDetails = async () => {
+    if (!editingEmployeeId) {
+      return;
+    }
+
+    if (!editName.trim()) {
+      toast.error('Employee name is required.');
+      return;
+    }
+
+    setSavingId(editingEmployeeId);
+    try {
+      await patchApiResource<Employee>(`/employees/${editingEmployeeId}`, {
+        name: editName.trim(),
+        email: editEmail.trim() || null,
+        role: editRole,
+        phone: editPhone.trim() || null,
+        job_title: editJobTitle.trim() || null,
+        department: editDepartment.trim() || null,
+        notes: editNotes.trim() || null,
+      });
+      await fetchEmployees();
+      cancelEditing();
+      toast.success('Employee details updated');
+    } catch (error) {
+      console.error('Update employee details failed', error);
+      toast.error(error instanceof Error ? error.message : 'Update employee details failed');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const updateEmployeeRole = async (employee: Employee, nextRole: EmployeeRole) => {
+    setSavingId(employee.id);
+    try {
+      await patchApiResource<Employee>(`/employees/${employee.id}`, {
+        role: nextRole,
+      });
+      await fetchEmployees();
+      toast.success('Employee role updated');
+    } catch (error) {
+      console.error('Update employee role failed', error);
+      toast.error(error instanceof Error ? error.message : 'Update employee role failed');
     } finally {
       setSavingId(null);
     }
@@ -179,7 +279,25 @@ export default function Employees() {
             <Input placeholder="Employee name" value={name} onChange={(e) => setName(e.target.value)} />
             <Input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
             <Input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <select
+              className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+              value={role}
+              onChange={(e) => setRole(e.target.value as EmployeeRole)}
+            >
+              <option value="operation">Operation</option>
+              <option value="security">Security</option>
+              <option value="admin">Admin</option>
+            </select>
+            <Input placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <Input placeholder="Job title" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+            <Input placeholder="Department" value={department} onChange={(e) => setDepartment(e.target.value)} />
           </div>
+          <textarea
+            className="mt-3 min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+            placeholder="Notes"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
           <div className="mt-3 text-xs text-slate-500">
             Password must be at least 8 characters. Email is optional.
           </div>
@@ -192,6 +310,48 @@ export default function Employees() {
         </CardContent>
       </Card>
 
+      {editingEmployee && (
+        <Card>
+          <CardHeader className="py-4">
+            <CardTitle className="text-lg">Edit Employee</CardTitle>
+            <p className="text-sm text-gray-500 mt-1">Update profile details for {editingEmployee.name}.</p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 md:grid-cols-3">
+              <Input placeholder="Employee name" value={editName} onChange={(e) => setEditName(e.target.value)} />
+              <Input placeholder="Email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
+              <select
+                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                value={editRole}
+                onChange={(e) => setEditRole(e.target.value as EmployeeRole)}
+              >
+                <option value="operation">Operation</option>
+                <option value="security">Security</option>
+                <option value="admin">Admin</option>
+              </select>
+              <Input placeholder="Phone" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} />
+              <Input placeholder="Job title" value={editJobTitle} onChange={(e) => setEditJobTitle(e.target.value)} />
+              <Input placeholder="Department" value={editDepartment} onChange={(e) => setEditDepartment(e.target.value)} />
+            </div>
+            <textarea
+              className="mt-3 min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+              placeholder="Notes"
+              value={editNotes}
+              onChange={(e) => setEditNotes(e.target.value)}
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={cancelEditing} disabled={savingId === editingEmployeeId}>
+                Cancel
+              </Button>
+              <Button onClick={saveEmployeeDetails} disabled={savingId === editingEmployeeId}>
+                {savingId === editingEmployeeId && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save changes
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Employee Directory</CardTitle>
@@ -203,6 +363,9 @@ export default function Employees() {
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="font-bold px-4 py-2">Name</TableHead>
                   <TableHead className="font-bold px-4 py-2">Email</TableHead>
+                  <TableHead className="font-bold px-4 py-2">Role</TableHead>
+                  <TableHead className="font-bold px-4 py-2">Contact</TableHead>
+                  <TableHead className="font-bold px-4 py-2">Department</TableHead>
                   <TableHead className="font-bold px-4 py-2">Status</TableHead>
                   <TableHead className="font-bold px-4 py-2 text-right">Actions</TableHead>
                 </TableRow>
@@ -210,15 +373,35 @@ export default function Employees() {
               <TableBody className="text-[11px] divide-y divide-gray-100">
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={4} className="h-24 text-center text-gray-500">
+                    <TableCell colSpan={7} className="h-24 text-center text-gray-500">
                       Loading employees...
                     </TableCell>
                   </TableRow>
                 )}
                 {!isLoading && filteredEmployees.map((employee) => (
                   <TableRow key={employee.id} className="hover:bg-gray-50/50">
-                    <TableCell className="px-4 py-3 font-bold text-slate-800">{employee.name}</TableCell>
+                    <TableCell className="px-4 py-3">
+                      <div className="font-bold text-slate-800">{employee.name}</div>
+                      <div className="mt-1 text-[10px] text-slate-400">{employee.job_title || 'No job title'}</div>
+                    </TableCell>
                     <TableCell className="px-4 py-3 text-slate-500">{employee.email || 'No email'}</TableCell>
+                    <TableCell className="px-4 py-3">
+                      <select
+                        className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700"
+                        value={employee.role}
+                        onChange={(event) => updateEmployeeRole(employee, event.target.value as EmployeeRole)}
+                        disabled={savingId === employee.id}
+                      >
+                        <option value="operation">Operation</option>
+                        <option value="security">Security</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-slate-500">{employee.phone || 'No phone'}</TableCell>
+                    <TableCell className="px-4 py-3 text-slate-500">
+                      <div>{employee.department || 'No department'}</div>
+                      {employee.notes && <div className="mt-1 max-w-48 truncate text-[10px] text-slate-400">{employee.notes}</div>}
+                    </TableCell>
                     <TableCell className="px-4 py-3">
                       <Badge
                         variant="secondary"
@@ -229,6 +412,15 @@ export default function Employees() {
                     </TableCell>
                     <TableCell className="px-4 py-3 text-right">
                       <div className="flex justify-end gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => startEditing(employee)}
+                          disabled={savingId === employee.id}
+                        >
+                          <Pencil className="mr-2 h-3.5 w-3.5" />
+                          Edit
+                        </Button>
                         <Button
                           variant="outline"
                           size="sm"
@@ -252,7 +444,7 @@ export default function Employees() {
                 ))}
                 {!isLoading && filteredEmployees.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="h-24 text-center text-gray-500">
+                    <TableCell colSpan={7} className="h-24 text-center text-gray-500">
                       {search ? 'No employees found matching your search.' : 'No employees found.'}
                     </TableCell>
                   </TableRow>
