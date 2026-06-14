@@ -1,14 +1,33 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { Item, Reader, RFIDEvent, Zone, Alert, Order, RpiDevice, ZoneSummary, RfidLiveSocketEvent, Employee } from '../types';
+import { Item, Reader, RFIDEvent, Zone, Alert, Order, RpiDevice, ZoneSummary, RfidLiveSocketEvent, Employee, SystemSettings } from '../types';
 import { mockItems, mockReaders, mockEvents, mockZones, mockAlerts, mockRpiDevices } from '../data/mockData';
 import { toast } from 'sonner';
-import { fetchApiResource } from '@/lib/api';
+import { fetchApiResource, patchApiResource, postApiResource } from '@/lib/api';
 import { getWebSocketUrl } from '../config';
 
 type InventoryResourceKey = 'items' | 'readers' | 'events' | 'zones' | 'zoneSummary' | 'rpiDevices' | 'orders' | 'employees';
 type InventoryResourceFlags = Record<InventoryResourceKey, boolean>;
 type InventoryResourceErrors = Record<InventoryResourceKey, string | null>;
 type LiveConnectionStatus = 'disconnected' | 'connecting' | 'connected';
+const SETTINGS_STORAGE_KEY = 'smart-rfid-system-settings';
+
+const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
+  readerPollIntervalSeconds: 5,
+  gateDetectionWindowMinutes: 10,
+  missingItemThresholdMinutes: 15,
+  stolenItemThresholdMinutes: 10,
+  staleReaderThresholdMinutes: 2,
+  liveReconnectDelaySeconds: 2,
+};
+
+type ApiSystemSettings = {
+  reader_poll_interval_seconds: number;
+  gate_detection_window_minutes: number;
+  missing_item_threshold_minutes: number;
+  stolen_item_threshold_minutes: number;
+  stale_reader_threshold_minutes: number;
+  live_reconnect_delay_seconds: number;
+};
 
 interface InventoryContextType {
   items: Item[];
@@ -19,6 +38,7 @@ interface InventoryContextType {
   alerts: Alert[];
   orders: Order[];
   employees: Employee[];
+  settings: SystemSettings;
   rpiDevices: RpiDevice[];
   loading: InventoryResourceFlags;
   loaded: InventoryResourceFlags;
@@ -35,6 +55,9 @@ interface InventoryContextType {
   fetchRpiDevices: () => Promise<void>;
   fetchOrders: () => Promise<void>;
   fetchEmployees: () => Promise<void>;
+  fetchSettings: () => Promise<void>;
+  updateSettings: (settings: SystemSettings) => Promise<void>;
+  resetSettings: () => Promise<void>;
   connectLiveEvents: () => void;
   disconnectLiveEvents: () => void;
 }
@@ -67,6 +90,53 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function loadStoredSettings(): SystemSettings {
+  if (typeof window === 'undefined') {
+    return DEFAULT_SYSTEM_SETTINGS;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!stored) {
+      return DEFAULT_SYSTEM_SETTINGS;
+    }
+
+    return {
+      ...DEFAULT_SYSTEM_SETTINGS,
+      ...JSON.parse(stored),
+    };
+  } catch (error) {
+    console.error('Failed to load system settings', error);
+    return DEFAULT_SYSTEM_SETTINGS;
+  }
+}
+
+function toSystemSettings(settings: ApiSystemSettings): SystemSettings {
+  return {
+    readerPollIntervalSeconds: settings.reader_poll_interval_seconds,
+    gateDetectionWindowMinutes: settings.gate_detection_window_minutes,
+    missingItemThresholdMinutes: settings.missing_item_threshold_minutes,
+    stolenItemThresholdMinutes: settings.stolen_item_threshold_minutes,
+    staleReaderThresholdMinutes: settings.stale_reader_threshold_minutes,
+    liveReconnectDelaySeconds: settings.live_reconnect_delay_seconds,
+  };
+}
+
+function toApiSystemSettings(settings: SystemSettings): ApiSystemSettings {
+  return {
+    reader_poll_interval_seconds: settings.readerPollIntervalSeconds,
+    gate_detection_window_minutes: settings.gateDetectionWindowMinutes,
+    missing_item_threshold_minutes: settings.missingItemThresholdMinutes,
+    stolen_item_threshold_minutes: settings.stolenItemThresholdMinutes,
+    stale_reader_threshold_minutes: settings.staleReaderThresholdMinutes,
+    live_reconnect_delay_seconds: settings.liveReconnectDelaySeconds,
+  };
+}
+
+function storeSettings(settings: SystemSettings) {
+  window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+}
+
 export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [items, setItems] = useState<Item[]>([]);
   const [readers, setReaders] = useState<Reader[]>([]);
@@ -76,6 +146,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [alerts, setAlerts] = useState<Alert[]>(mockAlerts);
   const [orders, setOrders] = useState<Order[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [settings, setSettings] = useState<SystemSettings>(() => loadStoredSettings());
   const [rpiDevices, setRpiDevices] = useState<RpiDevice[]>([]);
   const [loading, setLoading] = useState<InventoryResourceFlags>(initialResourceFlags);
   const [loaded, setLoaded] = useState<InventoryResourceFlags>(initialResourceFlags);
@@ -350,15 +421,45 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (maintainLiveConnectionRef.current) {
         reconnectTimeoutRef.current = window.setTimeout(() => {
           openLiveSocket();
-        }, 2000);
+        }, settings.liveReconnectDelaySeconds * 1000);
       }
     };
-  }, [applyLiveEvent]);
+  }, [applyLiveEvent, settings.liveReconnectDelaySeconds]);
 
   const connectLiveEvents = useCallback(() => {
     maintainLiveConnectionRef.current = true;
     openLiveSocket();
   }, [openLiveSocket]);
+
+  const fetchSettings = useCallback(async () => {
+    try {
+      const data = await fetchApiResource<ApiSystemSettings>('/settings');
+      const nextSettings = toSystemSettings(data);
+      setSettings(nextSettings);
+      storeSettings(nextSettings);
+    } catch (error) {
+      console.error('Failed to fetch settings', error);
+      setSettings(loadStoredSettings());
+    }
+  }, []);
+
+  const updateSettings = useCallback(async (nextSettings: SystemSettings) => {
+    const data = await patchApiResource<ApiSystemSettings>('/settings', toApiSystemSettings(nextSettings));
+    const savedSettings = toSystemSettings(data);
+    setSettings(savedSettings);
+    storeSettings(savedSettings);
+  }, []);
+
+  const resetSettings = useCallback(async () => {
+    const data = await postApiResource<ApiSystemSettings>('/settings/reset', {});
+    const resetValues = toSystemSettings(data);
+    setSettings(resetValues);
+    storeSettings(resetValues);
+  }, []);
+
+  useEffect(() => {
+    void fetchSettings();
+  }, [fetchSettings]);
 
   const disconnectLiveEvents = useCallback(() => {
     maintainLiveConnectionRef.current = false;
@@ -490,6 +591,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       alerts,
       orders,
       employees,
+      settings,
       rpiDevices,
       loading,
       loaded,
@@ -506,6 +608,9 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       fetchRpiDevices,
       fetchOrders,
       fetchEmployees,
+      fetchSettings,
+      updateSettings,
+      resetSettings,
       connectLiveEvents,
       disconnectLiveEvents,
     }}>

@@ -15,6 +15,7 @@ import Readers from './pages/Readers';
 import Alerts from './pages/Alerts';
 import Orders from './pages/Orders';
 import Employees from './pages/Employees';
+import Settings from './pages/Settings';
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="orders" element={<Orders />} />
             <Route path="employees" element={<Employees />} />
             <Route path="alerts" element={<Alerts />} />
+            <Route path="settings" element={<Settings />} />
           </Route>
         </Routes>
       </BrowserRouter>

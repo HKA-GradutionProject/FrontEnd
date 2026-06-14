@@ -146,9 +146,19 @@ export interface Employee {
   id: number;
   name: string;
   email: string | null;
+  role?: 'admin' | 'operation' | 'security';
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface SystemSettings {
+  readerPollIntervalSeconds: number;
+  gateDetectionWindowMinutes: number;
+  missingItemThresholdMinutes: number;
+  stolenItemThresholdMinutes: number;
+  staleReaderThresholdMinutes: number;
+  liveReconnectDelaySeconds: number;
 }
 
 export interface OrderItem {

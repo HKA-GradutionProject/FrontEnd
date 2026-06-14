@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Map, List, Package2, ShieldAlert, Cpu, ShoppingCart, UsersRound } from 'lucide-react';
+import { LayoutDashboard, Map, List, Package2, ShieldAlert, Cpu, ShoppingCart, UsersRound, Settings as SettingsIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Toaster } from "@/components/ui/sonner";
 import { useInventory } from '../../context/InventoryContext';
@@ -14,6 +14,7 @@ const navigation = [
   { name: 'Orders', href: '/orders', icon: ShoppingCart },
   { name: 'Employees', href: '/employees', icon: UsersRound },
   { name: 'Alerts', href: '/alerts', icon: ShieldAlert },
+  { name: 'Settings', href: '/settings', icon: SettingsIcon },
 ];
 
 export default function AppLayout() {
