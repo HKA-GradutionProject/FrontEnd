@@ -16,12 +16,14 @@ import Alerts from './pages/Alerts';
 import Orders from './pages/Orders';
 import Employees from './pages/Employees';
 import Settings from './pages/Settings';
+import Login from './pages/Login';
 
 export default function App() {
   return (
     <InventoryProvider>
       <BrowserRouter>
         <Routes>
+          <Route path="/login" element={<Login />} />
           <Route path="/" element={<AppLayout />}>
             <Route index element={<Dashboard />} />
             <Route path="simulation" element={<Simulation />} />

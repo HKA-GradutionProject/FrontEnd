@@ -11,6 +11,16 @@ type InventoryResourceErrors = Record<InventoryResourceKey, string | null>;
 type LiveConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 const SETTINGS_STORAGE_KEY = 'smart-rfid-system-settings';
 
+export type OrderFilters = {
+  order_id?: number;
+  search?: string;
+  status?: string;
+  created_from?: string;
+  created_to?: string;
+  item_id?: number;
+  approved_physically?: boolean;
+};
+
 const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   readerPollIntervalSeconds: 5,
   gateDetectionWindowMinutes: 10,
@@ -53,7 +63,7 @@ interface InventoryContextType {
   fetchZones: () => Promise<void>;
   fetchZoneSummary: () => Promise<void>;
   fetchRpiDevices: () => Promise<void>;
-  fetchOrders: () => Promise<void>;
+  fetchOrders: (filters?: OrderFilters) => Promise<void>;
   fetchEmployees: () => Promise<void>;
   fetchSettings: () => Promise<void>;
   updateSettings: (settings: SystemSettings) => Promise<void>;
@@ -252,10 +262,28 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async (filters: OrderFilters = {}) => {
     setLoading(prev => ({ ...prev, orders: true }));
     try {
-      const data = await fetchApiResource<Order[]>('/orders');
+      if (filters.order_id) {
+        const order = await fetchApiResource<Order>(`/orders/${filters.order_id}`);
+        setOrders([order]);
+        setErrors(prev => ({ ...prev, orders: null }));
+        return;
+      }
+
+      const params = new URLSearchParams();
+
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === '') {
+          return;
+        }
+
+        params.set(key, String(value));
+      });
+
+      const query = params.toString();
+      const data = await fetchApiResource<Order[]>(query ? `/orders?${query}` : '/orders');
       setOrders(data);
       setErrors(prev => ({ ...prev, orders: null }));
     } catch (e) {
@@ -519,8 +547,8 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (!item) return prev;
 
       const isOrdered = item.status === 'ordered';
-      const exitReader = readers.find(r => r.reader_type === 'exit_reader');
-      const exitZoneId = zones.find(z => z.zone_type?.includes('exit'))?.id || 999;
+      const exitReader = readers.find(r => r.reader_type === 'gate_reader');
+      const exitZoneId = zones.find(z => z.zone_type === 'gate_reader')?.id || 999;
       
       if (exitReader && item.rfid_tag_code) {
          addEvent({

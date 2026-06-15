@@ -10,52 +10,92 @@ import { fetchApiResource } from '@/lib/api';
 import type { Item, Reader, RpiDevice, Zone } from '../types';
 
 const zone3DMap: Record<number, [number, number, number]> = {
-  // Map based on numeric IDs or logic (entry, exit, shelf)
+  // Map based on numeric IDs or logic (gate, shelf)
 };
 
 // We will figure out basePos functionally since IDs are dynamic.
 
 function getReaderRange(reader: Reader) {
-  if (reader.reader_type?.includes('exit') || reader.reader_type?.includes('entry')) {
+  if (getReaderType(reader) === 'gate_reader') {
     return 1.9;
   }
 
   return 1.6;
 }
 
-function isShelfZone(zone?: Zone | null) {
-  return Boolean(zone && !zone.zone_type?.includes('entry') && !zone.zone_type?.includes('exit'));
+function getReaderType(reader?: Reader | null) {
+  return reader?.reader_type?.trim().toLowerCase();
 }
 
-function getZoneBasePosition(zone: Zone, zones: Zone[]): [number, number, number] {
-  if (zone.zone_type?.includes('entry')) {
-    return [-4, 0, 0];
+function getZoneType(zone?: Zone | null) {
+  return zone?.zone_type?.trim().toLowerCase();
+}
+
+function isShelfZone(zone?: Zone | null) {
+  return getZoneType(zone) === 'shelf_reader';
+}
+
+function isGateZone(zone?: Zone | null) {
+  return getZoneType(zone) === 'gate_reader';
+}
+
+function zoneHasGateReader(zone: Zone, readers: Reader[]) {
+  return readers.some(reader => reader.zone_id === zone.id && getReaderType(reader) === 'gate_reader');
+}
+
+function shouldRenderGateZone(zone: Zone, readers: Reader[]) {
+  return isGateZone(zone) || zoneHasGateReader(zone, readers);
+}
+
+function shouldRenderShelfZone(zone: Zone, readers: Reader[]) {
+  return isShelfZone(zone) && !zoneHasGateReader(zone, readers);
+}
+
+function getZoneBasePosition(zone: Zone, zones: Zone[], readers: Reader[] = []): [number, number, number] {
+  const sortedZones = [...zones].sort((left, right) => left.id - right.id);
+
+  if (shouldRenderGateZone(zone, readers)) {
+    const gateZones = sortedZones.filter(candidateZone => shouldRenderGateZone(candidateZone, readers));
+    const gateIndex = Math.max(0, gateZones.findIndex(candidateZone => candidateZone.id === zone.id));
+    const gateSpacing = 3.4;
+    const startX = -((gateZones.length - 1) * gateSpacing) / 2;
+
+    return [startX + gateIndex * gateSpacing, 0, 6];
   }
 
-  if (zone.zone_type?.includes('exit')) {
-    return [4, 0, 0];
-  }
+  const shelfZones = sortedZones.filter(candidateZone => shouldRenderShelfZone(candidateZone, readers));
+  const shelfIndex = Math.max(
+    0,
+    shelfZones.findIndex(candidateZone => candidateZone.id === zone.id)
+  );
+  const shelfSpacingX = 3.4;
+  const startX = -((shelfZones.length - 1) * shelfSpacingX) / 2;
+  const sx = startX + shelfIndex * shelfSpacingX;
+  const sz = -3;
 
-  const shelfIndex = zones
-    .filter(candidateZone => isShelfZone(candidateZone))
-    .findIndex(candidateZone => candidateZone.id === zone.id);
-  const sx = -1.5 + (shelfIndex % 2) * 4;
-  const sz = -2.5 + Math.floor(shelfIndex / 2) * 4.5;
+  if (!shouldRenderShelfZone(zone, readers)) {
+    const fallbackIndex = sortedZones
+      .filter(candidateZone => !shouldRenderGateZone(candidateZone, readers))
+      .findIndex(candidateZone => candidateZone.id === zone.id);
+
+    return [startX + Math.max(0, fallbackIndex) * shelfSpacingX, 0, sz];
+  }
 
   return [sx, 0, sz];
 }
 
-function getZoneSlotOffset(zone: Zone | undefined, slotIndex: number): [number, number, number] {
-  if (isShelfZone(zone)) {
-    const tierLevel = slotIndex % 5;
-    const indexInTier = Math.floor(slotIndex / 5);
-    const row = Math.floor(indexInTier / 2);
-    const col = indexInTier % 2;
+function getZoneSlotOffset(zone: Zone | undefined, slotIndex: number, readers: Reader[] = []): [number, number, number] {
+  if (zone && shouldRenderShelfZone(zone, readers)) {
+    const shelfLevels = [0.42, 0.92, 1.42, 1.92, 2.42];
+    const tierLevel = slotIndex % shelfLevels.length;
+    const indexInTier = Math.floor(slotIndex / shelfLevels.length);
+    const row = Math.floor(indexInTier / 3);
+    const col = indexInTier % 3;
 
     return [
-      (col - 0.5) * 0.6,
-      0.2 + tierLevel * 0.5 + 0.175,
-      (row - 0.5) * 0.4,
+      (col - 1) * 0.42,
+      shelfLevels[tierLevel],
+      (row - 0.5) * 0.32,
     ];
   }
 
@@ -352,11 +392,24 @@ function LaserGate({ laserColor = "#06b6d4" }: { laserColor?: string }) {
   });
 
   return (
-    <group rotation={[0, Math.PI / 2, 0]}>
+    <group>
       {/* Base */}
       <RoundedBox args={[3, 0.1, 3]} position={[0, 0.05, 0]} radius={0.02} castShadow receiveShadow>
         <meshStandardMaterial color="#1e293b" metalness={0.5} roughness={0.5} />
       </RoundedBox>
+      {/* Soft border wall around gate */}
+      <mesh position={[-3.15, 2.15, 0.12]} castShadow receiveShadow>
+        <boxGeometry args={[1.05, 4.3, 0.12]} />
+        <meshStandardMaterial color="#cbd5e1" transparent opacity={0.18} roughness={0.98} />
+      </mesh>
+      <mesh position={[3.15, 2.15, 0.12]} castShadow receiveShadow>
+        <boxGeometry args={[1.05, 4.3, 0.12]} />
+        <meshStandardMaterial color="#cbd5e1" transparent opacity={0.18} roughness={0.98} />
+      </mesh>
+      <mesh position={[0, 4.32, 0.12]} castShadow receiveShadow>
+        <boxGeometry args={[7.4, 0.32, 0.12]} />
+        <meshStandardMaterial color="#cbd5e1" transparent opacity={0.12} roughness={0.98} />
+      </mesh>
       {/* Posts */}
       <mesh position={[-1.4, 1.05, 0]} castShadow receiveShadow>
         <boxGeometry args={[0.2, 2, 0.2]} />
@@ -698,8 +751,8 @@ export default function Simulation() {
           zone.id,
           previousZoneId === zone.id ? previousSlot : undefined,
         );
-        const basePos = getZoneBasePosition(zone, zones);
-        const [offsetX, offsetY, offsetZ] = getZoneSlotOffset(zone, slotIndex);
+        const basePos = getZoneBasePosition(zone, zones, readers);
+        const [offsetX, offsetY, offsetZ] = getZoneSlotOffset(zone, slotIndex, readers);
 
         nextItemZoneAssignments.set(item.id, zone.id);
         nextItemSlotAssignments.set(item.id, slotIndex);
@@ -723,7 +776,7 @@ export default function Simulation() {
     itemSlotAssignmentRef.current = nextItemSlotAssignments;
 
     return nextItemsWithTargets;
-  }, [items, zones]);
+  }, [items, zones, readers]);
 
   const selectedItem = selectedType === 'item' ? items.find(i => i.id === selectedId) : null;
   const activeItem = selectedItemDetails?.id === selectedId ? selectedItemDetails : selectedItem;
@@ -1221,12 +1274,11 @@ export default function Simulation() {
 
           {/* Render Zones */}
           {zones.map(zone => {
-            const isExit = zone.zone_type?.includes('exit');
-            const isEntry = zone.zone_type?.includes('entry');
-            const pos = getZoneBasePosition(zone, zones);
             const zoneReaders = readers.filter(r => r.zone_id === zone.id);
+            const isGate = shouldRenderGateZone(zone, readers);
+            const pos = getZoneBasePosition(zone, zones, readers);
             const selectedZoneReader = zoneReaders.find(r => selectedType === 'reader' && selectedId === r.id);
-            const rangeSpherePosition: [number, number, number] = isExit || isEntry ? [0, 1.05, 0] : [0, 1.25, 0];
+            const rangeSpherePosition: [number, number, number] = isGate ? [0, 1.05, 0] : [0, 1.25, 0];
 
             return (
               <group key={zone.id} position={pos}>
@@ -1237,10 +1289,8 @@ export default function Simulation() {
                   />
                 )}
                 {/* Zone Base Platform */}
-                {isExit ? (
-                  <LaserGate laserColor="#ef4444" />
-                ) : isEntry ? (
-                  <LaserGate laserColor="#06b6d4" />
+                {isGate ? (
+                  <LaserGate laserColor="#f59e0b" />
                 ) : (
                   <group position={[0, 0, 0]}>
                     {/* Vertical Posts */}
@@ -1264,11 +1314,11 @@ export default function Simulation() {
                 )}
 
                 {/* Zone Label */}
-                {isExit || isEntry ? (
+                {isGate ? (
                   <Text
-                    position={[0, isExit ? 0.15 : 2.3, 1.3]}
+                    position={[0, 2.3, 1.3]}
                     fontSize={0.25}
-                    color={isExit ? "#dc2626" : "#06b6d4"}
+                    color="#f59e0b"
                     anchorX="center"
                     anchorY="bottom"
                     fontWeight="bold"
@@ -1289,7 +1339,7 @@ export default function Simulation() {
                   <SimulatedReader 
                     key={r.id}
                     reader={r}
-                    position={[0.9, isExit || isEntry ? 0.1 : 2.5, -0.6 + i * 1.2]} 
+                    position={[0.9, isGate ? 0.1 : 2.5, -0.6 + i * 1.2]} 
                     isSelected={selectedType === 'reader' && selectedId === r.id}
                     onClick={() => { setSelectedType('reader'); setSelectedId(r.id); }}
                   />
@@ -1300,7 +1350,7 @@ export default function Simulation() {
                    <SimulatedRPi 
                      key={rpiId} 
                      rpiId={rpiId.toString()} 
-                     position={[-0.9, isExit || isEntry ? 0.05 : 0.05, -0.6 + i * 0.5]} 
+                     position={[-0.9, 0.05, -0.6 + i * 0.5]} 
                      isSelected={selectedType === 'rpi' && selectedId === rpiId}
                      onClick={() => { setSelectedType('rpi'); setSelectedId(rpiId); }}
                    />

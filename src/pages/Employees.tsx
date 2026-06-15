@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Search, UserRound, ShieldCheck, ShieldX, Pencil } from 'lucide-react';
+import { Loader2, Search, UserRound, ShieldCheck, ShieldX, Pencil, Plus, X } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { Employee } from '../types';
 import { deleteApiResource, patchApiResource, postApiResource } from '@/lib/api';
@@ -25,6 +25,7 @@ export default function Employees() {
   const [password, setPassword] = useState('');
   const [savingId, setSavingId] = useState<number | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [editingEmployeeId, setEditingEmployeeId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
@@ -212,7 +213,16 @@ export default function Employees() {
           <h1 className="text-3xl font-bold tracking-tight">Employees</h1>
           <p className="text-gray-500 mt-1">Manage staff access and account status.</p>
         </div>
-        {isLoading && <Loader2 className="h-5 w-5 animate-spin text-slate-500" />}
+        <div className="flex items-center gap-2">
+          <Button
+            variant={showCreateForm ? 'secondary' : 'outline'}
+            onClick={() => setShowCreateForm((value) => !value)}
+          >
+            {showCreateForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            Create Employee
+          </Button>
+          {isLoading && <Loader2 className="h-5 w-5 animate-spin text-slate-500" />}
+        </div>
       </div>
 
       {errors.employees && (
@@ -260,8 +270,8 @@ export default function Employees() {
         <CardHeader className="py-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <CardTitle className="text-lg">Create Employee</CardTitle>
-              <p className="text-sm text-gray-500 mt-1">Add a new employee account to the system.</p>
+              <CardTitle className="text-lg">Employee Directory</CardTitle>
+              <p className="text-sm text-gray-500 mt-1">Search and manage staff accounts.</p>
             </div>
             <div className="relative w-full lg:w-72">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
@@ -274,40 +284,42 @@ export default function Employees() {
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 md:grid-cols-3">
-            <Input placeholder="Employee name" value={name} onChange={(e) => setName(e.target.value)} />
-            <Input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <Input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            <select
-              className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-              value={role}
-              onChange={(e) => setRole(e.target.value as EmployeeRole)}
-            >
-              <option value="operation">Operation</option>
-              <option value="security">Security</option>
-              <option value="admin">Admin</option>
-            </select>
-            <Input placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
-            <Input placeholder="Job title" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
-            <Input placeholder="Department" value={department} onChange={(e) => setDepartment(e.target.value)} />
-          </div>
-          <textarea
-            className="mt-3 min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-            placeholder="Notes"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-          <div className="mt-3 text-xs text-slate-500">
-            Password must be at least 8 characters. Email is optional.
-          </div>
-          <div className="mt-4 flex justify-end">
-            <Button onClick={onCreate} disabled={createDisabled}>
-              {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Create employee
-            </Button>
-          </div>
-        </CardContent>
+        {showCreateForm && (
+          <CardContent>
+            <div className="grid gap-3 md:grid-cols-3">
+              <Input placeholder="Employee name" value={name} onChange={(e) => setName(e.target.value)} />
+              <Input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <Input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+              <select
+                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                value={role}
+                onChange={(e) => setRole(e.target.value as EmployeeRole)}
+              >
+                <option value="operation">Operation</option>
+                <option value="security">Security</option>
+                <option value="admin">Admin</option>
+              </select>
+              <Input placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+              <Input placeholder="Job title" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+              <Input placeholder="Department" value={department} onChange={(e) => setDepartment(e.target.value)} />
+            </div>
+            <textarea
+              className="mt-3 min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+              placeholder="Notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+            <div className="mt-3 text-xs text-slate-500">
+              Password must be at least 8 characters. Email is optional.
+            </div>
+            <div className="mt-4 flex justify-end">
+              <Button onClick={onCreate} disabled={createDisabled}>
+                {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Create employee
+              </Button>
+            </div>
+          </CardContent>
+        )}
       </Card>
 
       {editingEmployee && (
@@ -354,7 +366,7 @@ export default function Employees() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Employee Directory</CardTitle>
+          <CardTitle>Employee Table</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="border rounded-lg overflow-hidden">

@@ -1,5 +1,17 @@
 import { API_BASE_URL } from '../src/config';
 
+export class ApiError extends Error {
+  status: number;
+  data: unknown;
+
+  constructor(message: string, status: number, data: unknown) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.data = data;
+  }
+}
+
 async function readResponseBody(response: Response): Promise<unknown> {
   const text = await response.text();
 
@@ -47,7 +59,7 @@ async function requestApiResource<T>(path: string, options: RequestInit = {}): P
   });
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(path, method, response.status, data));
+    throw new ApiError(getErrorMessage(path, method, response.status, data), response.status, data);
   }
 
   return data as T;
