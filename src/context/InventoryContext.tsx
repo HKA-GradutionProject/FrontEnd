@@ -30,6 +30,14 @@ const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   liveReconnectDelaySeconds: 2,
 };
 
+const RFID_WS_EVENT_TYPES = new Set<RfidLiveSocketEvent['type']>([
+  'rfid_detection_event',
+  'rfid_registered_entry_approved',
+  'rfid_unregistered_entry_warning',
+  'rfid_ordered_exit_approved',
+  'rfid_security_warning',
+]);
+
 type ApiSystemSettings = {
   reader_poll_interval_seconds: number;
   gate_detection_window_minutes: number;
@@ -314,15 +322,22 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const applyLiveEvent = useCallback((liveEvent: RfidLiveSocketEvent) => {
     const timestamp = liveEvent.received_at || liveEvent.detected_at || new Date().toISOString();
+    const rpiDevice = liveEvent.rpi || liveEvent.rpi_device;
+    const eventZoneId =
+      liveEvent.to_zone?.id ||
+      liveEvent.from_zone?.id ||
+      liveEvent.item?.current_zone_id ||
+      liveEvent.variant?.current_zone_id ||
+      0;
 
     setEvents(prev => {
       const nextEvent: RFIDEvent = {
         id: liveEvent.event_id,
-        rpi_device_id: liveEvent.rpi?.id || 0,
+        rpi_device_id: rpiDevice?.id || 0,
         reader_id: liveEvent.reader?.id || 0,
-        zone_id: liveEvent.to_zone?.id || liveEvent.item?.current_zone_id || 0,
+        zone_id: eventZoneId,
         item_id: liveEvent.item?.id || 0,
-        rpi_device_code: liveEvent.rpi?.device_id || '',
+        rpi_device_code: rpiDevice?.device_id || '',
         reader_name: liveEvent.reader?.name || '',
         reader_device_code: liveEvent.reader?.reader_device_id || '',
         reader_id_unique: Boolean(liveEvent.reader?.reader_id_unique),
@@ -348,9 +363,74 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return {
           ...item,
           name: liveEvent.item.name || item.name,
-          current_zone_id: liveEvent.item.current_zone_id,
+          current_zone_id:
+            liveEvent.to_zone?.id ??
+            liveEvent.item.current_zone_id ??
+            liveEvent.variant?.current_zone_id ??
+            item.current_zone_id,
+          status:
+            liveEvent.type === 'rfid_security_warning'
+              ? 'alert'
+              : liveEvent.type === 'rfid_ordered_exit_approved'
+                ? 'sold'
+                : item.status,
         };
       }));
+    }
+
+    if (liveEvent.type === 'rfid_unregistered_entry_warning') {
+      setAlerts(prevAlerts => [{
+        id: `rfid-unregistered-${liveEvent.event_id}`,
+        type: 'Unknown Entry',
+        itemName: liveEvent.label || 'Unknown RFID tag',
+        rfidTag: liveEvent.tag,
+        readerName: liveEvent.reader?.name,
+        zoneId: liveEvent.to_zone?.id?.toString(),
+        time: timestamp,
+        status: 'new',
+      }, ...prevAlerts.filter(alert => alert.id !== `rfid-unregistered-${liveEvent.event_id}`)]);
+
+      toast.warning('Unknown item entered warehouse', {
+        description: liveEvent.to_zone?.name
+          ? `${liveEvent.tag} was detected in ${liveEvent.to_zone.name}.`
+          : liveEvent.tag,
+      });
+    }
+
+    if (liveEvent.type === 'rfid_security_warning') {
+      setAlerts(prevAlerts => [{
+        id: `rfid-security-${liveEvent.event_id}`,
+        type: 'Unauthorized Exit',
+        itemId: liveEvent.item?.id,
+        itemName: liveEvent.item?.name || liveEvent.label,
+        rfidTag: liveEvent.tag,
+        readerName: liveEvent.reader?.name,
+        zoneId: liveEvent.from_zone?.id?.toString(),
+        time: timestamp,
+        status: 'new',
+      }, ...prevAlerts.filter(alert => alert.id !== `rfid-security-${liveEvent.event_id}`)]);
+
+      toast.error('Unauthorized warehouse exit', {
+        description: liveEvent.item?.name
+          ? `${liveEvent.item.name} left without a matching order.`
+          : liveEvent.tag,
+      });
+    }
+
+    if (liveEvent.type === 'rfid_registered_entry_approved') {
+      toast.success('Registered entry approved', {
+        description: liveEvent.item?.name && liveEvent.to_zone?.name
+          ? `${liveEvent.item.name} entered ${liveEvent.to_zone.name}.`
+          : liveEvent.label || liveEvent.tag,
+      });
+    }
+
+    if (liveEvent.type === 'rfid_ordered_exit_approved') {
+      toast.success('Ordered exit approved', {
+        description: liveEvent.item?.name
+          ? `${liveEvent.item.name} was physically approved for pickup.`
+          : liveEvent.label || liveEvent.tag,
+      });
     }
 
     if (liveEvent.item && liveEvent.to_zone) {
@@ -425,7 +505,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const data = JSON.parse(event.data) as RfidLiveSocketEvent;
         console.log('[Inventory] WebSocket message', data);
 
-        if (data.type === 'rfid_detection_event') {
+        if (RFID_WS_EVENT_TYPES.has(data.type)) {
           applyLiveEvent(data);
         }
       } catch (error) {

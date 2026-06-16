@@ -1,13 +1,13 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useInventory } from '../context/InventoryContext';
-import { RadioReceiver, Package2, X, Image as ImageIcon, Cpu, Link as LinkIcon, Info, Search, Loader2, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, ArrowRight, History } from 'lucide-react';
+import { RadioReceiver, Package2, X, Image as ImageIcon, Cpu, Link as LinkIcon, Info, Search, Loader2, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, ArrowRight, History, ShieldAlert, TriangleAlert, CheckCircle2, LogOut } from 'lucide-react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Text, Grid, RoundedBox, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { fetchApiResource } from '@/lib/api';
-import type { Item, Reader, RpiDevice, Zone } from '../types';
+import type { Item, Reader, RfidLiveSocketEvent, RpiDevice, Zone } from '../types';
 
 const zone3DMap: Record<number, [number, number, number]> = {
   // Map based on numeric IDs or logic (gate, shelf)
@@ -16,7 +16,7 @@ const zone3DMap: Record<number, [number, number, number]> = {
 // We will figure out basePos functionally since IDs are dynamic.
 
 function getReaderRange(reader: Reader) {
-  if (getReaderType(reader) === 'gate_reader') {
+  if (isGateReader(reader)) {
     return 1.9;
   }
 
@@ -24,23 +24,39 @@ function getReaderRange(reader: Reader) {
 }
 
 function getReaderType(reader?: Reader | null) {
-  return reader?.reader_type?.trim().toLowerCase();
+  return reader?.reader_type?.trim().toLowerCase().replace(/[\s-]+/g, '_');
 }
 
 function getZoneType(zone?: Zone | null) {
-  return zone?.zone_type?.trim().toLowerCase();
+  return zone?.zone_type?.trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function isGateReader(reader?: Reader | null) {
+  const readerType = getReaderType(reader);
+  return Boolean(readerType && ['gate_reader', 'entry_reader', 'exit_reader', 'gate', 'entry', 'exit'].includes(readerType));
+}
+
+function isShelfReader(reader?: Reader | null) {
+  const readerType = getReaderType(reader);
+  return Boolean(readerType && ['shelf_reader', 'normal_reader', 'shelf', 'normal'].includes(readerType));
 }
 
 function isShelfZone(zone?: Zone | null) {
-  return getZoneType(zone) === 'shelf_reader';
+  const zoneType = getZoneType(zone);
+  return Boolean(zoneType && ['shelf_reader', 'normal_reader', 'shelf', 'normal', 'storage'].includes(zoneType));
 }
 
 function isGateZone(zone?: Zone | null) {
-  return getZoneType(zone) === 'gate_reader';
+  const zoneType = getZoneType(zone);
+  return Boolean(zoneType && ['gate_reader', 'gate', 'entry', 'exit', 'entry_gate', 'exit_gate'].includes(zoneType));
 }
 
 function zoneHasGateReader(zone: Zone, readers: Reader[]) {
-  return readers.some(reader => reader.zone_id === zone.id && getReaderType(reader) === 'gate_reader');
+  return readers.some(reader => reader.zone_id === zone.id && isGateReader(reader));
+}
+
+function zoneHasShelfReader(zone: Zone, readers: Reader[]) {
+  return readers.some(reader => reader.zone_id === zone.id && isShelfReader(reader));
 }
 
 function shouldRenderGateZone(zone: Zone, readers: Reader[]) {
@@ -48,7 +64,7 @@ function shouldRenderGateZone(zone: Zone, readers: Reader[]) {
 }
 
 function shouldRenderShelfZone(zone: Zone, readers: Reader[]) {
-  return isShelfZone(zone) && !zoneHasGateReader(zone, readers);
+  return (isShelfZone(zone) || zoneHasShelfReader(zone, readers)) && !shouldRenderGateZone(zone, readers);
 }
 
 function getZoneBasePosition(zone: Zone, zones: Zone[], readers: Reader[] = []): [number, number, number] {
@@ -69,16 +85,25 @@ function getZoneBasePosition(zone: Zone, zones: Zone[], readers: Reader[] = []):
     shelfZones.findIndex(candidateZone => candidateZone.id === zone.id)
   );
   const shelfSpacingX = 3.4;
-  const startX = -((shelfZones.length - 1) * shelfSpacingX) / 2;
-  const sx = startX + shelfIndex * shelfSpacingX;
-  const sz = -3;
+  const shelfSpacingZ = 2.8;
+  const columns = Math.min(4, Math.max(1, shelfZones.length));
+  const shelfColumn = shelfIndex % columns;
+  const shelfRow = Math.floor(shelfIndex / columns);
+  const startX = -((columns - 1) * shelfSpacingX) / 2;
+  const sx = startX + shelfColumn * shelfSpacingX;
+  const sz = -3.2 + shelfRow * shelfSpacingZ;
 
   if (!shouldRenderShelfZone(zone, readers)) {
-    const fallbackIndex = sortedZones
-      .filter(candidateZone => !shouldRenderGateZone(candidateZone, readers))
+    const nonGateZones = sortedZones
+      .filter(candidateZone => !shouldRenderGateZone(candidateZone, readers));
+    const fallbackIndex = nonGateZones
       .findIndex(candidateZone => candidateZone.id === zone.id);
+    const fallbackColumns = Math.min(4, Math.max(1, nonGateZones.length));
+    const fallbackColumn = Math.max(0, fallbackIndex) % fallbackColumns;
+    const fallbackRow = Math.floor(Math.max(0, fallbackIndex) / fallbackColumns);
+    const fallbackStartX = -((fallbackColumns - 1) * shelfSpacingX) / 2;
 
-    return [startX + Math.max(0, fallbackIndex) * shelfSpacingX, 0, sz];
+    return [fallbackStartX + fallbackColumn * shelfSpacingX, 0, -3.2 + fallbackRow * shelfSpacingZ];
   }
 
   return [sx, 0, sz];
@@ -96,6 +121,17 @@ function getZoneSlotOffset(zone: Zone | undefined, slotIndex: number, readers: R
       (col - 1) * 0.42,
       shelfLevels[tierLevel],
       (row - 0.5) * 0.32,
+    ];
+  }
+
+  if (zone && shouldRenderGateZone(zone, readers)) {
+    const row = Math.floor(slotIndex / 4);
+    const col = slotIndex % 4;
+
+    return [
+      (col - 1.5) * 0.5,
+      0.275,
+      2.25 + row * 0.5,
     ];
   }
 
@@ -397,14 +433,22 @@ function LaserGate({ laserColor = "#06b6d4" }: { laserColor?: string }) {
       <RoundedBox args={[3, 0.1, 3]} position={[0, 0.05, 0]} radius={0.02} castShadow receiveShadow>
         <meshStandardMaterial color="#1e293b" metalness={0.5} roughness={0.5} />
       </RoundedBox>
-      {/* Soft border wall around gate */}
-      <mesh position={[-3.15, 2.15, 0.12]} castShadow receiveShadow>
-        <boxGeometry args={[1.05, 4.3, 0.12]} />
-        <meshStandardMaterial color="#cbd5e1" transparent opacity={0.18} roughness={0.98} />
+      {/* Floor border keeps the gate readable without closing the side opening */}
+      <mesh position={[0, 0.13, -1.52]} receiveShadow>
+        <boxGeometry args={[3.18, 0.05, 0.08]} />
+        <meshStandardMaterial color={laserColor} emissive={laserColor} emissiveIntensity={0.35} roughness={0.42} />
       </mesh>
-      <mesh position={[3.15, 2.15, 0.12]} castShadow receiveShadow>
-        <boxGeometry args={[1.05, 4.3, 0.12]} />
-        <meshStandardMaterial color="#cbd5e1" transparent opacity={0.18} roughness={0.98} />
+      <mesh position={[0, 0.13, 1.52]} receiveShadow>
+        <boxGeometry args={[3.18, 0.05, 0.08]} />
+        <meshStandardMaterial color={laserColor} emissive={laserColor} emissiveIntensity={0.35} roughness={0.42} />
+      </mesh>
+      <mesh position={[-1.52, 0.13, 0]} receiveShadow>
+        <boxGeometry args={[0.08, 0.05, 3.18]} />
+        <meshStandardMaterial color={laserColor} emissive={laserColor} emissiveIntensity={0.35} roughness={0.42} />
+      </mesh>
+      <mesh position={[1.52, 0.13, 0]} receiveShadow>
+        <boxGeometry args={[0.08, 0.05, 3.18]} />
+        <meshStandardMaterial color={laserColor} emissive={laserColor} emissiveIntensity={0.35} roughness={0.42} />
       </mesh>
       <mesh position={[0, 4.32, 0.12]} castShadow receiveShadow>
         <boxGeometry args={[7.4, 0.32, 0.12]} />
@@ -433,6 +477,95 @@ function LaserGate({ laserColor = "#06b6d4" }: { laserColor?: string }) {
   );
 }
 
+type RfidEventTone = 'movement' | 'entry' | 'operation-warning' | 'exit-approved' | 'security-warning';
+
+type SceneEventVisual = {
+  id: string;
+  tone: RfidEventTone;
+  label: string;
+  position: [number, number, number];
+  isExit: boolean;
+};
+
+const RFID_EVENT_STYLES: Record<RfidEventTone, { color: string; bgClass: string; text: string }> = {
+  movement: { color: '#38bdf8', bgClass: 'border-sky-300 bg-sky-950/90 text-sky-100', text: 'Moved' },
+  entry: { color: '#22c55e', bgClass: 'border-emerald-300 bg-emerald-950/90 text-emerald-100', text: 'Entry approved' },
+  'operation-warning': { color: '#f59e0b', bgClass: 'border-amber-300 bg-amber-950/90 text-amber-100', text: 'Unknown entry' },
+  'exit-approved': { color: '#a855f7', bgClass: 'border-purple-300 bg-purple-950/90 text-purple-100', text: 'Exit approved' },
+  'security-warning': { color: '#ef4444', bgClass: 'border-red-300 bg-red-950/90 text-red-100', text: 'Security alert' },
+};
+
+function getRfidEventTone(type?: string): RfidEventTone {
+  switch (type) {
+    case 'rfid_registered_entry_approved':
+      return 'entry';
+    case 'rfid_unregistered_entry_warning':
+      return 'operation-warning';
+    case 'rfid_ordered_exit_approved':
+      return 'exit-approved';
+    case 'rfid_security_warning':
+      return 'security-warning';
+    default:
+      return 'movement';
+  }
+}
+
+function SceneEventPulse({ visual }: { visual: SceneEventVisual }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const trailRef = useRef<THREE.Mesh>(null);
+  const style = RFID_EVENT_STYLES[visual.tone];
+
+  useFrame(({ clock }) => {
+    const elapsed = clock.elapsedTime;
+
+    if (groupRef.current) {
+      const scale = 1 + (Math.sin(elapsed * 5.5) + 1) * 0.16;
+      groupRef.current.scale.set(scale, 1, scale);
+    }
+
+    if (trailRef.current) {
+      const cycle = (elapsed * 0.55) % 1;
+      trailRef.current.position.set(0, 1.05 + Math.sin(elapsed * 7) * 0.05, cycle * 3.6);
+      const material = trailRef.current.material;
+
+      if (material instanceof THREE.MeshStandardMaterial) {
+        material.opacity = 1 - cycle * 0.75;
+        material.emissiveIntensity = 0.8 + Math.sin(elapsed * 8) * 0.35;
+      }
+    }
+  });
+
+  return (
+    <group position={visual.position}>
+      <group ref={groupRef} position={[0, 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh>
+          <torusGeometry args={[1.45, 0.025, 8, 96]} />
+          <meshBasicMaterial color={style.color} transparent opacity={0.72} depthWrite={false} />
+        </mesh>
+        <mesh>
+          <torusGeometry args={[1.92, 0.018, 8, 96]} />
+          <meshBasicMaterial color={style.color} transparent opacity={0.38} depthWrite={false} />
+        </mesh>
+      </group>
+
+      <pointLight color={style.color} intensity={1.4} distance={4.2} />
+
+      {visual.isExit && (
+        <mesh ref={trailRef} position={[0, 1.05, 0]}>
+          <sphereGeometry args={[0.16, 18, 18]} />
+          <meshStandardMaterial color={style.color} emissive={style.color} emissiveIntensity={1} transparent opacity={0.95} />
+        </mesh>
+      )}
+
+      <Html position={[0, 3.24, 0]} center sprite zIndexRange={[18, 0]}>
+        <div className={`rounded-full border px-3 py-1 text-[10px] font-black tracking-[0.08em] shadow-2xl whitespace-nowrap ${style.bgClass}`}>
+          {visual.label}
+        </div>
+      </Html>
+    </group>
+  );
+}
+
 function WarehouseEnvironment() {
   return (
     <group>
@@ -440,6 +573,12 @@ function WarehouseEnvironment() {
       <mesh position={[0, -0.05, 0]} receiveShadow>
         <boxGeometry args={[20, 0.1, 15]} />
         <meshStandardMaterial color="#64748b" roughness={0.8} />
+      </mesh>
+
+      {/* Outside staging apron beyond the gate */}
+      <mesh position={[0, -0.055, 9.25]} receiveShadow>
+        <boxGeometry args={[9, 0.08, 3.5]} />
+        <meshStandardMaterial color="#475569" roughness={0.86} />
       </mesh>
       
       {/* Back Wall */}
@@ -570,10 +709,11 @@ export default function Simulation() {
     );
   }, [items, searchQuery]);
 
-  const movementHistory = useMemo(() => {
+  const eventActivity = useMemo(() => {
     return events
       .map(event => {
         const payload = event.raw_payload as Partial<{
+          type: RfidLiveSocketEvent['type'];
           item: { id: number; name: string };
           from_zone: { name: string };
           to_zone: { name: string };
@@ -597,19 +737,68 @@ export default function Simulation() {
           event.movement_detected ??
           (fromZoneName && toZoneName && fromZoneName !== toZoneName)
         );
+        const tone = getRfidEventTone(payload?.type);
+        const style = RFID_EVENT_STYLES[tone];
+        const title =
+          tone === 'movement'
+            ? 'Zone movement'
+            : style.text;
 
         return {
           id: event.id,
+          type: payload?.type || 'rfid_detection_event',
+          tone,
+          title,
           itemName,
           fromZoneName,
           toZoneName,
           movementDetected,
+          tag: event.tag,
           timestamp: payload?.received_at || payload?.detected_at || event.received_at || event.detected_at,
         };
       })
-      .filter(entry => entry.movementDetected && entry.toZoneName)
       .slice(0, 8);
   }, [events, items, zones]);
+
+  const sceneEventVisuals = useMemo<SceneEventVisual[]>(() => {
+    const now = Date.now();
+
+    return events
+      .map(event => {
+        const payload = event.raw_payload as Partial<RfidLiveSocketEvent> | null;
+        const tone = getRfidEventTone(payload?.type);
+        const zoneId =
+          payload?.to_zone?.id ??
+          payload?.from_zone?.id ??
+          event.zone_id;
+        const zone = zones.find(candidateZone => candidateZone.id === zoneId);
+
+        if (!zone) {
+          return null;
+        }
+
+        const timestamp = payload?.received_at || payload?.detected_at || event.received_at || event.detected_at;
+        const ageMs = now - new Date(timestamp).getTime();
+
+        if (!Number.isFinite(ageMs) || ageMs > 30000) {
+          return null;
+        }
+
+        const [x, y, z] = getZoneBasePosition(zone, zones, readers);
+        const style = RFID_EVENT_STYLES[tone];
+        const itemName = payload?.item?.name || event.label || payload?.tag || event.tag;
+
+        return {
+          id: `${event.id}-${payload?.type || 'rfid_detection_event'}`,
+          tone,
+          label: `${style.text}: ${itemName}`,
+          position: [x, y, z] as [number, number, number],
+          isExit: tone === 'exit-approved' || tone === 'security-warning',
+        };
+      })
+      .filter((visual): visual is SceneEventVisual => Boolean(visual))
+      .slice(0, 6);
+  }, [events, readers, zones]);
 
   const handlePointerMissed = () => {
     setSelectedType(null);
@@ -897,8 +1086,8 @@ export default function Simulation() {
               <div className="flex items-center gap-2">
                 <History className="h-4 w-4 text-sky-600" />
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900">Movement History</h3>
-                  <p className="text-[11px] text-slate-500">Live zone transitions from RFID events</p>
+                  <h3 className="text-sm font-bold text-slate-900">RFID Event Activity</h3>
+                  <p className="text-[11px] text-slate-500">Live detections, entries, exits, and warnings</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -926,27 +1115,63 @@ export default function Simulation() {
             </div>
 
             <div className="max-h-[16.5rem] space-y-2 overflow-y-auto p-3">
-              {movementHistory.length > 0 ? (
-                movementHistory.map(entry => (
+              {eventActivity.length > 0 ? (
+                eventActivity.map(entry => {
+                  const Icon =
+                    entry.tone === 'security-warning'
+                      ? ShieldAlert
+                      : entry.tone === 'operation-warning'
+                        ? TriangleAlert
+                        : entry.tone === 'exit-approved'
+                          ? LogOut
+                          : entry.tone === 'entry'
+                            ? CheckCircle2
+                            : ArrowRight;
+                  const toneClass =
+                    entry.tone === 'security-warning'
+                      ? 'bg-red-100 text-red-700'
+                      : entry.tone === 'operation-warning'
+                        ? 'bg-amber-100 text-amber-700'
+                        : entry.tone === 'exit-approved'
+                          ? 'bg-purple-100 text-purple-700'
+                          : entry.tone === 'entry'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-sky-100 text-sky-700';
+
+                  return (
                   <div key={`${entry.id}-${entry.timestamp}`} className="rounded-xl border border-slate-200/80 bg-white/55 px-3 py-2.5">
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-900">{entry.itemName}</p>
-                        <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-600">
-                          <span className="truncate font-medium text-slate-700">{entry.fromZoneName || 'Unknown zone'}</span>
-                          <ArrowRight className="h-3 w-3 shrink-0 text-slate-400" />
-                          <span className="truncate font-medium text-slate-900">{entry.toZoneName}</span>
-                        </p>
+                      <div className="flex min-w-0 gap-2">
+                        <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${toneClass}`}>
+                          <Icon className="h-3.5 w-3.5" />
+                        </span>
+                        <div className="min-w-0">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <p className="truncate text-sm font-semibold text-slate-900">{entry.itemName}</p>
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${toneClass}`}>
+                              {entry.title}
+                            </span>
+                          </div>
+                          <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-600">
+                            <span className="truncate font-medium text-slate-700">{entry.fromZoneName || (entry.tone === 'operation-warning' ? 'Unknown tag' : 'Warehouse')}</span>
+                            <ArrowRight className="h-3 w-3 shrink-0 text-slate-400" />
+                            <span className="truncate font-medium text-slate-900">{entry.toZoneName || (entry.tone === 'exit-approved' ? 'Collected' : entry.tone === 'security-warning' ? 'Outside gate' : 'Unknown zone')}</span>
+                          </p>
+                          {entry.tag && (
+                            <p className="mt-1 truncate font-mono text-[10px] text-slate-400">{entry.tag}</p>
+                          )}
+                        </div>
                       </div>
                       <span className="shrink-0 font-mono text-[10px] text-slate-500">
                         {new Date(entry.timestamp).toLocaleTimeString()}
                       </span>
                     </div>
                   </div>
-                ))
+                  );
+                })
               ) : (
                 <div className="rounded-xl border border-dashed border-slate-200/80 bg-white/30 px-4 py-6 text-center">
-                  <p className="text-sm font-medium text-slate-700">No movement history yet.</p>
+                  <p className="text-sm font-medium text-slate-700">No RFID activity yet.</p>
                 </div>
               )}
             </div>
@@ -1358,6 +1583,10 @@ export default function Simulation() {
               </group>
             );
           })}
+
+          {sceneEventVisuals.map(visual => (
+            <SceneEventPulse key={visual.id} visual={visual} />
+          ))}
 
           {/* Render Animated Items */}
           {loaded.items && loaded.zones && itemsWithTargets.map(item => (

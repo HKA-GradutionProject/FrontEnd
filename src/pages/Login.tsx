@@ -1,20 +1,12 @@
 import { FormEvent, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, Cpu, Loader2, LockKeyhole, UserRound } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { ApiError, postApiResource } from '@/lib/api';
-
-type LoginEmployee = {
-  id: number;
-  name: string;
-  role: 'admin' | 'operation' | 'security';
-  department: string | null;
-};
-
-const AUTH_USER_STORAGE_KEY = 'smart-rfid-auth-user';
+import { AuthUser, storeAuthUser } from '../lib/auth';
 
 function getLoginErrorMessage(error: unknown) {
   if (error instanceof ApiError) {
@@ -32,8 +24,13 @@ function getLoginErrorMessage(error: unknown) {
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const from = location.state as { from?: { pathname?: string; search?: string } } | null;
+  const redirectPath = from?.from?.pathname && from.from.pathname !== '/login'
+    ? `${from.from.pathname}${from.from.search || ''}`
+    : '/';
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -47,22 +44,13 @@ export default function Login() {
     setIsSubmitting(true);
 
     try {
-      const employee = await postApiResource<LoginEmployee>('/employees/login', {
+      const employee = await postApiResource<AuthUser>('/employees/login', {
         identifier,
         password,
       });
 
-      const serializedEmployee = JSON.stringify(employee);
-
-      if (shouldRemember) {
-        window.localStorage.setItem(AUTH_USER_STORAGE_KEY, serializedEmployee);
-        window.sessionStorage.removeItem(AUTH_USER_STORAGE_KEY);
-      } else {
-        window.sessionStorage.setItem(AUTH_USER_STORAGE_KEY, serializedEmployee);
-        window.localStorage.removeItem(AUTH_USER_STORAGE_KEY);
-      }
-
-      navigate('/');
+      storeAuthUser(employee, shouldRemember);
+      navigate(redirectPath, { replace: true });
     } catch (error) {
       setErrorMessage(getLoginErrorMessage(error));
     } finally {

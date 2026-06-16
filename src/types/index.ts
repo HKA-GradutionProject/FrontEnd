@@ -104,7 +104,15 @@ export interface RFIDEvent {
 export interface RfidLiveSocketItem {
   id: number;
   name: string;
-  current_zone_id: number;
+  current_zone_id?: number | null;
+}
+
+export interface RfidLiveSocketVariant {
+  id: number;
+  item_id?: number;
+  current_zone_id?: number | null;
+  rfid_tag_code?: string | null;
+  qty?: number;
 }
 
 export interface RfidLiveSocketZone {
@@ -114,25 +122,34 @@ export interface RfidLiveSocketZone {
 }
 
 export interface RfidLiveSocketEvent {
-  type: 'rfid_detection_event';
+  type:
+    | 'rfid_detection_event'
+    | 'rfid_registered_entry_approved'
+    | 'rfid_unregistered_entry_warning'
+    | 'rfid_ordered_exit_approved'
+    | 'rfid_security_warning';
   event_id: number;
   label: string;
   tag: string;
   rssi: number;
   distance: string;
   movement_detected: boolean;
-  item?: RfidLiveSocketItem;
-  from_zone?: RfidLiveSocketZone;
-  to_zone?: RfidLiveSocketZone;
+  notification_role?: 'operation' | 'security' | string;
+  item?: RfidLiveSocketItem | null;
+  variant?: RfidLiveSocketVariant | null;
+  from_zone?: RfidLiveSocketZone | null;
+  to_zone?: RfidLiveSocketZone | null;
   reader?: Partial<Reader> & { id?: number; name?: string; reader_device_id?: string };
   rpi?: Partial<RpiDevice> & { id?: number; device_id?: string; name?: string };
+  rpi_device?: Partial<RpiDevice> & { id?: number; device_id?: string; name?: string };
   detected_at?: string;
   received_at?: string;
+  raw_payload?: any;
 }
 
 export interface Alert {
   id: string;
-  type: 'Unauthorized Exit' | 'Missing Item' | 'Low Battery' | 'Reader Offline';
+  type: 'Unauthorized Exit' | 'Unknown Entry' | 'Missing Item' | 'Low Battery' | 'Reader Offline';
   itemId?: number;
   itemName?: string;
   rfidTag?: string;
