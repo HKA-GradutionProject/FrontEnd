@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { DEFAULT_FRONTEND_SETTINGS, loadFrontendSettings, storeFrontendSettings, type FrontendSettings } from '@/lib/frontendSettings';
 import { useInventory } from '../context/InventoryContext';
 import { SystemSettings } from '../types';
 
@@ -70,6 +71,7 @@ const settingFields: SettingField[] = [
 export default function Settings() {
   const { settings, updateSettings, resetSettings } = useInventory();
   const [draft, setDraft] = useState<SystemSettings>(settings);
+  const [frontendDraft, setFrontendDraft] = useState<FrontendSettings>(() => loadFrontendSettings());
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
@@ -83,9 +85,14 @@ export default function Settings() {
       return !Number.isFinite(value) || value < field.min || value > field.max;
     });
   }, [draft]);
+  const isMovementSimulationInvalid =
+    !Number.isFinite(frontendDraft.movementSimulationSeconds) ||
+    frontendDraft.movementSimulationSeconds < 1 ||
+    frontendDraft.movementSimulationSeconds > 30;
 
-  const hasChanges = JSON.stringify(draft) !== JSON.stringify(settings);
-  const canSave = hasChanges && validationErrors.length === 0;
+  const hasSystemChanges = JSON.stringify(draft) !== JSON.stringify(settings);
+  const hasFrontendChanges = JSON.stringify(frontendDraft) !== JSON.stringify(loadFrontendSettings());
+  const canSave = (hasSystemChanges || hasFrontendChanges) && validationErrors.length === 0 && !isMovementSimulationInvalid;
 
   const updateField = (field: SettingField, value: string) => {
     setDraft((prev) => ({
@@ -95,14 +102,21 @@ export default function Settings() {
   };
 
   const onSave = async () => {
-    if (validationErrors.length > 0) {
+    if (validationErrors.length > 0 || isMovementSimulationInvalid) {
       toast.error('Check setting limits before saving.');
       return;
     }
 
     setIsSaving(true);
     try {
-      await updateSettings(draft);
+      if (hasSystemChanges) {
+        await updateSettings(draft);
+      }
+
+      if (hasFrontendChanges) {
+        storeFrontendSettings(frontendDraft);
+      }
+
       toast.success('Settings saved');
     } catch (error) {
       console.error('Save settings failed', error);
@@ -116,6 +130,8 @@ export default function Settings() {
     setIsResetting(true);
     try {
       await resetSettings();
+      setFrontendDraft(DEFAULT_FRONTEND_SETTINGS);
+      storeFrontendSettings(DEFAULT_FRONTEND_SETTINGS);
       toast.success('Settings reset');
     } catch (error) {
       console.error('Reset settings failed', error);
@@ -147,6 +163,11 @@ export default function Settings() {
       {validationErrors.length > 0 && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {validationErrors.map((field) => `${field.label} must be ${field.min}-${field.max} ${field.unit}.`).join(' ')}
+        </div>
+      )}
+      {isMovementSimulationInvalid && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          Movement simulation time must be 1-30 seconds.
         </div>
       )}
 
@@ -196,6 +217,54 @@ export default function Settings() {
                 </div>
               );
             })}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="border-b bg-slate-50">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <SlidersHorizontal className="h-5 w-5 text-emerald-600" />
+            Frontend Simulation
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-md bg-slate-100">
+                    <Clock className="h-4 w-4 text-slate-600" />
+                  </div>
+                  <div>
+                    <label htmlFor="movementSimulationSeconds" className="block text-sm font-semibold text-slate-900">
+                      Movement simulation time
+                    </label>
+                    <div className="mt-0.5 text-xs text-slate-500">
+                      1-30 seconds, stored in this browser session
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 flex items-center gap-2">
+                <Input
+                  id="movementSimulationSeconds"
+                  type="number"
+                  min={1}
+                  max={30}
+                  step={0.5}
+                  value={Number.isNaN(frontendDraft.movementSimulationSeconds) ? '' : frontendDraft.movementSimulationSeconds}
+                  onChange={(event) => {
+                    setFrontendDraft((prev) => ({
+                      ...prev,
+                      movementSimulationSeconds: Number(event.target.value),
+                    }));
+                  }}
+                  className={isMovementSimulationInvalid ? 'border-red-300 bg-red-50 focus-visible:ring-red-200' : ''}
+                />
+                <span className="w-20 text-sm text-slate-500">seconds</span>
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>

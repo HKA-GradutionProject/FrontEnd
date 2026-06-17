@@ -5,8 +5,8 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Text, Grid, RoundedBox, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { fetchApiResource } from '@/lib/api';
+import { DEFAULT_FRONTEND_SETTINGS, loadFrontendSettings } from '@/lib/frontendSettings';
 import type { Item, Reader, RfidLiveSocketEvent, RpiDevice, Zone } from '../types';
 
 const zone3DMap: Record<number, [number, number, number]> = {
@@ -181,7 +181,23 @@ function moveTowards(
 }
 
 
-function SimulatedItem({ item, targetPosition, isSelected, onClick }: { item: Item, targetPosition: THREE.Vector3, isSelected: boolean, onClick: () => void }) {
+function SimulatedItem({
+  item,
+  targetPosition,
+  movementStart,
+  movementSimulationSeconds,
+  isSelected,
+  onMovementComplete,
+  onClick,
+}: {
+  item: Item;
+  targetPosition: THREE.Vector3;
+  movementStart?: RegisteredEntryStart;
+  movementSimulationSeconds: number;
+  isSelected: boolean;
+  onMovementComplete?: (itemId: number) => void;
+  onClick: () => void;
+}) {
   const meshRef = useRef<THREE.Mesh>(null);
   const [hovered, setHovered] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
@@ -189,15 +205,11 @@ function SimulatedItem({ item, targetPosition, isSelected, onClick }: { item: It
   const previousGroundTargetRef = useRef(targetPosition.clone());
   const activeAnimationRef = useRef<ItemMovementAnimation | null>(null);
   const movementScratchRef = useRef(new THREE.Vector3());
+  const movementStartKeyRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    const nextTarget = targetPosition.clone();
-    const previousTarget = previousGroundTargetRef.current;
-
-    if (previousTarget.distanceTo(nextTarget) < 0.001) {
-      return;
-    }
-
+  const startMovement = (previousTarget: THREE.Vector3, nextTarget: THREE.Vector3) => {
+    const speedScale = DEFAULT_FRONTEND_SETTINGS.movementSimulationSeconds / movementSimulationSeconds;
+    const holdDuration = ITEM_HOVER_DURATION_SECONDS / speedScale;
     const hoverY = Math.max(
       ITEM_MOVE_MIN_HOVER_HEIGHT,
       previousTarget.y,
@@ -209,11 +221,39 @@ function SimulatedItem({ item, targetPosition, isSelected, onClick }: { item: It
       fromHover: new THREE.Vector3(previousTarget.x, hoverY, previousTarget.z),
       toHover: new THREE.Vector3(nextTarget.x, hoverY, nextTarget.z),
       toGround: nextTarget,
-      holdRemaining: ITEM_HOVER_DURATION_SECONDS,
+      holdRemaining: holdDuration,
     };
     setIsMoving(true);
     previousGroundTargetRef.current = nextTarget;
-  }, [targetPosition.x, targetPosition.y, targetPosition.z]);
+  };
+
+  useEffect(() => {
+    if (!movementStart || movementStartKeyRef.current === movementStart.key) {
+      return;
+    }
+
+    movementStartKeyRef.current = movementStart.key;
+    const startPosition = movementStart.position.clone();
+    const nextTarget = targetPosition.clone();
+
+    if (meshRef.current) {
+      meshRef.current.position.copy(startPosition);
+    }
+
+    previousGroundTargetRef.current = startPosition;
+    startMovement(startPosition, nextTarget);
+  }, [movementSimulationSeconds, movementStart, targetPosition.x, targetPosition.y, targetPosition.z]);
+
+  useEffect(() => {
+    const nextTarget = targetPosition.clone();
+    const previousTarget = previousGroundTargetRef.current;
+
+    if (previousTarget.distanceTo(nextTarget) < 0.001) {
+      return;
+    }
+
+    startMovement(previousTarget, nextTarget);
+  }, [movementSimulationSeconds, targetPosition.x, targetPosition.y, targetPosition.z]);
 
   useFrame((state, delta) => {
     if (meshRef.current) {
@@ -224,11 +264,12 @@ function SimulatedItem({ item, targetPosition, isSelected, onClick }: { item: It
       if (activeAnimation) {
         switch (activeAnimation.phase) {
           case 'lift': {
-            const reached = moveTowards(meshPosition, activeAnimation.fromHover, delta * ITEM_RAISE_SPEED, movementScratch);
+            const speedScale = DEFAULT_FRONTEND_SETTINGS.movementSimulationSeconds / movementSimulationSeconds;
+            const reached = moveTowards(meshPosition, activeAnimation.fromHover, delta * ITEM_RAISE_SPEED * speedScale, movementScratch);
 
             if (reached) {
               activeAnimation.phase = 'hold-origin';
-              activeAnimation.holdRemaining = ITEM_HOVER_DURATION_SECONDS;
+              activeAnimation.holdRemaining = ITEM_HOVER_DURATION_SECONDS / speedScale;
             }
             break;
           }
@@ -241,11 +282,12 @@ function SimulatedItem({ item, targetPosition, isSelected, onClick }: { item: It
             break;
           }
           case 'travel': {
-            const reached = moveTowards(meshPosition, activeAnimation.toHover, delta * ITEM_TRAVEL_SPEED, movementScratch);
+            const speedScale = DEFAULT_FRONTEND_SETTINGS.movementSimulationSeconds / movementSimulationSeconds;
+            const reached = moveTowards(meshPosition, activeAnimation.toHover, delta * ITEM_TRAVEL_SPEED * speedScale, movementScratch);
 
             if (reached) {
               activeAnimation.phase = 'hold-target';
-              activeAnimation.holdRemaining = ITEM_HOVER_DURATION_SECONDS;
+              activeAnimation.holdRemaining = ITEM_HOVER_DURATION_SECONDS / speedScale;
             }
             break;
           }
@@ -258,11 +300,13 @@ function SimulatedItem({ item, targetPosition, isSelected, onClick }: { item: It
             break;
           }
           case 'land': {
-            const reached = moveTowards(meshPosition, activeAnimation.toGround, delta * ITEM_LAND_SPEED, movementScratch);
+            const speedScale = DEFAULT_FRONTEND_SETTINGS.movementSimulationSeconds / movementSimulationSeconds;
+            const reached = moveTowards(meshPosition, activeAnimation.toGround, delta * ITEM_LAND_SPEED * speedScale, movementScratch);
 
             if (reached) {
               activeAnimationRef.current = null;
               setIsMoving(false);
+              onMovementComplete?.(item.id);
             }
             break;
           }
@@ -487,6 +531,53 @@ type SceneEventVisual = {
   isExit: boolean;
 };
 
+type WarningOverlayEvent = {
+  id: number;
+  type: string;
+  tone: Extract<RfidEventTone, 'operation-warning' | 'security-warning'>;
+  title: string;
+  itemId: number;
+  itemName: string;
+  thumbnail: string | null;
+  sku: string | null;
+  status: string | null;
+  category: string | null;
+  totalQty: number | null;
+  fromZoneName: string | null;
+  toZoneName: string | null;
+  tag: string;
+  readerName: string | null;
+  timestamp: string;
+};
+
+type QuantityMovementEvent = {
+  id: number;
+  type: 'rfid_registered_entry_approved' | 'rfid_ordered_exit_approved';
+  tone: Extract<RfidEventTone, 'entry' | 'exit-approved'>;
+  itemId: number;
+  itemName: string;
+  thumbnail: string | null;
+  fromZoneName: string | null;
+  toZoneName: string | null;
+  tag: string;
+  readerName: string | null;
+  readerDeviceId: string | null;
+  rpiId: string | null;
+  rssi: number | null;
+  distance: string | null;
+  logicCase: string | null;
+  gateEventId: number | null;
+  entryApproved: boolean | null;
+  qtyBefore: number | null;
+  qtyAfter: number | null;
+  timestamp: string;
+};
+
+type RegisteredEntryStart = {
+  key: string;
+  position: THREE.Vector3;
+};
+
 const RFID_EVENT_STYLES: Record<RfidEventTone, { color: string; bgClass: string; text: string }> = {
   movement: { color: '#38bdf8', bgClass: 'border-sky-300 bg-sky-950/90 text-sky-100', text: 'Moved' },
   entry: { color: '#22c55e', bgClass: 'border-emerald-300 bg-emerald-950/90 text-emerald-100', text: 'Entry approved' },
@@ -508,6 +599,255 @@ function getRfidEventTone(type?: string): RfidEventTone {
     default:
       return 'movement';
   }
+}
+
+function playAlertSiren(tone: WarningOverlayEvent['tone']) {
+  const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+  if (!AudioContextClass) {
+    return;
+  }
+
+  const audioContext = new AudioContextClass();
+  const oscillator = audioContext.createOscillator();
+  const oscillatorTwo = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  const now = audioContext.currentTime;
+  const isSecurity = tone === 'security-warning';
+  const duration = isSecurity ? 1.05 : 1.35;
+  const lowFrequency = isSecurity ? 430 : 620;
+  const highFrequency = isSecurity ? 980 : 880;
+
+  oscillator.type = isSecurity ? 'sawtooth' : 'square';
+  oscillatorTwo.type = 'triangle';
+  oscillator.frequency.setValueAtTime(lowFrequency, now);
+  oscillator.frequency.linearRampToValueAtTime(highFrequency, now + duration * 0.45);
+  oscillator.frequency.linearRampToValueAtTime(lowFrequency, now + duration);
+  oscillatorTwo.frequency.setValueAtTime(lowFrequency * 0.5, now);
+  oscillatorTwo.frequency.linearRampToValueAtTime(highFrequency * 0.5, now + duration * 0.45);
+  oscillatorTwo.frequency.linearRampToValueAtTime(lowFrequency * 0.5, now + duration);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.linearRampToValueAtTime(isSecurity ? 0.18 : 0.11, now + 0.08);
+  gain.gain.setValueAtTime(isSecurity ? 0.18 : 0.11, now + duration - 0.12);
+  gain.gain.linearRampToValueAtTime(0.0001, now + duration);
+
+  oscillator.connect(gain);
+  oscillatorTwo.connect(gain);
+  gain.connect(audioContext.destination);
+  oscillator.start(now);
+  oscillatorTwo.start(now);
+  oscillator.stop(now + duration);
+  oscillatorTwo.stop(now + duration);
+  oscillator.onended = () => {
+    void audioContext.close();
+  };
+}
+
+function WarningAlarmOverlay({ warning, onDismiss }: { warning: WarningOverlayEvent; onDismiss: () => void }) {
+  const isSecurity = warning.tone === 'security-warning';
+  const Icon = isSecurity ? ShieldAlert : TriangleAlert;
+  const theme = isSecurity
+    ? {
+        label: 'SECURITY WARNING',
+        message: 'Unauthorized warehouse exit detected',
+        glow: 'bg-red-500/20',
+        border: 'border-red-400/80',
+        panel: 'border-red-300/80 bg-red-950/90 text-red-50 shadow-[0_0_60px_rgba(239,68,68,0.55)]',
+        icon: 'bg-red-500 text-white shadow-[0_0_35px_rgba(239,68,68,0.8)]',
+        text: 'text-red-100',
+        badge: 'bg-red-500/25 text-red-100 border-red-300/70',
+      }
+    : {
+        label: 'OPERATION WARNING',
+        message: 'Unregistered RFID tag entered the warehouse',
+        glow: 'bg-orange-400/20',
+        border: 'border-orange-300/80',
+        panel: 'border-orange-300/80 bg-orange-950/90 text-orange-50 shadow-[0_0_60px_rgba(251,146,60,0.6)]',
+        icon: 'bg-orange-400 text-orange-950 shadow-[0_0_35px_rgba(251,146,60,0.9)]',
+        text: 'text-orange-100',
+        badge: 'bg-orange-400/25 text-orange-100 border-orange-200/70',
+      };
+
+  return (
+    <div className="absolute inset-0 z-[190] overflow-hidden">
+      <div className={`absolute inset-0 ${theme.glow} animate-pulse`} />
+      <div className={`absolute -left-24 top-1/2 h-80 w-80 -translate-y-1/2 rounded-full ${theme.glow} blur-2xl animate-ping`} />
+      <div className={`absolute -right-24 top-1/2 h-80 w-80 -translate-y-1/2 rounded-full ${theme.glow} blur-2xl animate-ping`} />
+      <div className={`absolute inset-4 rounded-2xl border-4 ${theme.border} animate-pulse`} />
+      <div className="absolute inset-x-0 top-0 h-3 bg-current opacity-70 animate-pulse" style={{ color: isSecurity ? '#ef4444' : '#fb923c' }} />
+      <div className="absolute inset-x-0 bottom-0 h-3 bg-current opacity-70 animate-pulse" style={{ color: isSecurity ? '#ef4444' : '#fb923c' }} />
+
+      <div className="absolute left-1/2 top-6 w-[34rem] max-w-[calc(100%-3rem)] -translate-x-1/2">
+        <div className={`rounded-2xl border px-5 py-4 backdrop-blur-md ${theme.panel}`}>
+          <div className="flex items-start gap-4">
+            <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${theme.icon}`}>
+              <Icon className="h-7 w-7" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase ${theme.badge}`}>
+                  {theme.label}
+                </span>
+                <span className="font-mono text-[11px] opacity-75">
+                  {new Date(warning.timestamp).toLocaleTimeString()}
+                </span>
+              </div>
+              <h2 className="mt-2 text-xl font-black">{theme.message}</h2>
+              <div className="mt-3 flex gap-3">
+                <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-white/20 bg-white/10">
+                  {warning.thumbnail ? (
+                    <img src={warning.thumbnail} alt={warning.itemName} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-white/55">
+                      <ImageIcon className="h-6 w-6" />
+                      <span className="text-[9px] font-bold uppercase">No Image</span>
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`truncate text-sm font-semibold ${theme.text}`}>
+                    {warning.itemName}
+                  </p>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                    <div className="min-w-0 rounded-lg bg-white/10 p-2">
+                      <span className="block text-[10px] font-bold uppercase opacity-60">Item ID</span>
+                      <span className="block truncate font-mono font-semibold">{warning.itemId || 'N/A'}</span>
+                    </div>
+                    <div className="min-w-0 rounded-lg bg-white/10 p-2">
+                      <span className="block text-[10px] font-bold uppercase opacity-60">SKU</span>
+                      <span className="block truncate font-mono font-semibold">{warning.sku || 'N/A'}</span>
+                    </div>
+                    <div className="min-w-0 rounded-lg bg-white/10 p-2">
+                      <span className="block text-[10px] font-bold uppercase opacity-60">Status</span>
+                      <span className="block truncate font-semibold">{warning.status?.replace('_', ' ') || 'N/A'}</span>
+                    </div>
+                    <div className="min-w-0 rounded-lg bg-white/10 p-2">
+                      <span className="block text-[10px] font-bold uppercase opacity-60">Qty</span>
+                      <span className="block truncate font-mono font-semibold">{warning.totalQty ?? 'N/A'}</span>
+                    </div>
+                  </div>
+                  {warning.category && (
+                    <p className="mt-2 truncate text-xs text-white/70">{warning.category}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                <div className="min-w-0 rounded-lg bg-white/10 p-2">
+                  <span className="block text-[10px] font-bold uppercase opacity-60">From</span>
+                  <span className="block truncate font-semibold">{warning.fromZoneName || (isSecurity ? 'Warehouse' : 'Unknown tag')}</span>
+                </div>
+                <div className="min-w-0 rounded-lg bg-white/10 p-2">
+                  <span className="block text-[10px] font-bold uppercase opacity-60">To</span>
+                  <span className="block truncate font-semibold">{warning.toZoneName || (isSecurity ? 'Outside gate' : 'Unknown zone')}</span>
+                </div>
+                <div className="min-w-0 rounded-lg bg-white/10 p-2">
+                  <span className="block text-[10px] font-bold uppercase opacity-60">Reader</span>
+                  <span className="block truncate font-semibold">{warning.readerName || 'Unknown reader'}</span>
+                </div>
+                <div className="min-w-0 rounded-lg bg-white/10 p-2">
+                  <span className="block text-[10px] font-bold uppercase opacity-60">RFID Tag</span>
+                  <span className="block truncate font-mono text-[10px] font-semibold">{warning.tag || 'N/A'}</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={onDismiss}
+                className="pointer-events-auto mt-4 inline-flex items-center justify-center rounded-lg bg-white px-4 py-2 text-xs font-black uppercase text-slate-900 shadow-lg transition hover:bg-slate-100"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActiveMovementCard({ event }: { event: QuantityMovementEvent }) {
+  const isEntry = event.type === 'rfid_registered_entry_approved';
+  const Icon = isEntry ? CheckCircle2 : LogOut;
+  const theme = isEntry
+    ? {
+        title: 'Registered Entry',
+        message: 'Item inserted into warehouse inventory',
+        qtyText: 'Qty increased',
+        route: `${event.fromZoneName || 'Gate reader'} to ${event.toZoneName || 'destination shelf'}`,
+        panel: 'border-emerald-200 bg-white/95',
+        iconWrap: 'bg-emerald-100 text-emerald-700',
+        badge: 'bg-emerald-100 text-emerald-700',
+        qty: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      }
+    : {
+        title: 'Ordered Exit',
+        message: 'Item removed from warehouse inventory',
+        qtyText: 'Qty decreased',
+        route: `${event.fromZoneName || 'Shelf'} to ${event.toZoneName || 'exit gate'}`,
+        panel: 'border-purple-200 bg-white/95',
+        iconWrap: 'bg-purple-100 text-purple-700',
+        badge: 'bg-purple-100 text-purple-700',
+        qty: 'bg-purple-50 text-purple-700 border-purple-200',
+      };
+
+  return (
+    <div className="absolute bottom-6 right-6 z-[210] w-[24rem] max-w-[calc(100%-3rem)] overflow-hidden rounded-2xl border shadow-2xl backdrop-blur-md">
+      <div className={`border ${theme.panel}`}>
+        <div className="flex gap-3 p-4">
+          <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+            {event.thumbnail ? (
+              <img src={event.thumbnail} alt={event.itemName} className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-slate-400">
+                <ImageIcon className="h-6 w-6" />
+                <span className="text-[9px] font-bold uppercase">No Image</span>
+              </div>
+            )}
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${theme.iconWrap}`}>
+                <Icon className="h-4 w-4" />
+              </span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${theme.badge}`}>
+                {theme.qtyText}
+              </span>
+              <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">
+                {new Date(event.timestamp).toLocaleTimeString()}
+              </span>
+            </div>
+
+            <h3 className="mt-2 text-sm font-black text-slate-900">{theme.title}</h3>
+            <p className="mt-0.5 truncate text-sm font-semibold text-slate-700">{event.itemName}</p>
+            <p className="mt-1 text-xs text-slate-500">{theme.message}</p>
+            <p className="mt-1 truncate text-xs font-medium text-slate-600">{theme.route}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 border-t border-slate-100 p-3 text-xs">
+          <div className={`rounded-lg border px-2 py-1.5 ${theme.qty}`}>
+            <span className="block text-[9px] font-bold uppercase opacity-70">Before</span>
+            <span className="font-mono font-black">{event.qtyBefore ?? 'N/A'}</span>
+          </div>
+          <div className={`rounded-lg border px-2 py-1.5 ${theme.qty}`}>
+            <span className="block text-[9px] font-bold uppercase opacity-70">After</span>
+            <span className="font-mono font-black">{event.qtyAfter ?? 'N/A'}</span>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-slate-600">
+            <span className="block text-[9px] font-bold uppercase opacity-70">RSSI</span>
+            <span className="font-mono font-black">{event.rssi ?? 'N/A'}</span>
+          </div>
+        </div>
+
+        <div className="space-y-1 border-t border-slate-100 px-4 py-3 text-[11px] text-slate-500">
+          <p className="truncate"><span className="font-bold text-slate-600">Reader:</span> {event.readerName || 'Unknown reader'}</p>
+          <p className="truncate"><span className="font-bold text-slate-600">Tag:</span> <span className="font-mono">{event.tag || 'N/A'}</span></p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SceneEventPulse({ visual }: { visual: SceneEventVisual }) {
@@ -550,7 +890,33 @@ function SceneEventPulse({ visual }: { visual: SceneEventVisual }) {
 
       <pointLight color={style.color} intensity={1.4} distance={4.2} />
 
-      {visual.isExit && (
+      {visual.tone === 'entry' && (
+        <group ref={trailRef} position={[0, 1.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <mesh position={[0, -0.32, 0]}>
+            <cylinderGeometry args={[0.055, 0.055, 0.72, 16]} />
+            <meshStandardMaterial color={style.color} emissive={style.color} emissiveIntensity={1.15} transparent opacity={0.92} />
+          </mesh>
+          <mesh position={[0, 0.15, 0]}>
+            <coneGeometry args={[0.18, 0.34, 24]} />
+            <meshStandardMaterial color={style.color} emissive={style.color} emissiveIntensity={1.25} transparent opacity={0.96} />
+          </mesh>
+        </group>
+      )}
+
+      {visual.tone === 'exit-approved' && (
+        <group ref={trailRef} position={[0, 1.05, 0]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh position={[0, -0.32, 0]}>
+            <cylinderGeometry args={[0.055, 0.055, 0.72, 16]} />
+            <meshStandardMaterial color={style.color} emissive={style.color} emissiveIntensity={1.15} transparent opacity={0.92} />
+          </mesh>
+          <mesh position={[0, 0.15, 0]}>
+            <coneGeometry args={[0.18, 0.34, 24]} />
+            <meshStandardMaterial color={style.color} emissive={style.color} emissiveIntensity={1.25} transparent opacity={0.96} />
+          </mesh>
+        </group>
+      )}
+
+      {visual.tone === 'security-warning' && (
         <mesh ref={trailRef} position={[0, 1.05, 0]}>
           <sphereGeometry args={[0.16, 18, 18]} />
           <meshStandardMaterial color={style.color} emissive={style.color} emissiveIntensity={1} transparent opacity={0.95} />
@@ -692,6 +1058,10 @@ export default function Simulation() {
   const [cameraFocusPoint, setCameraFocusPoint] = useState<THREE.Vector3 | null>(null);
   const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false);
   const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(false);
+  const [activeWarning, setActiveWarning] = useState<WarningOverlayEvent | null>(null);
+  const [activeQuantityMovement, setActiveQuantityMovement] = useState<QuantityMovementEvent | null>(null);
+  const [dismissedWarningKeys, setDismissedWarningKeys] = useState<Set<string>>(() => new Set());
+  const [frontendSettings, setFrontendSettings] = useState(() => loadFrontendSettings());
   const controlsRef = useRef<any>(null);
   const itemZoneAssignmentRef = useRef(new Map<number, number>());
   const itemSlotAssignmentRef = useRef(new Map<number, number>());
@@ -709,6 +1079,20 @@ export default function Simulation() {
     );
   }, [items, searchQuery]);
 
+  useEffect(() => {
+    const refreshFrontendSettings = () => {
+      setFrontendSettings(loadFrontendSettings());
+    };
+
+    window.addEventListener('smart-rfid-frontend-settings-change', refreshFrontendSettings);
+    window.addEventListener('storage', refreshFrontendSettings);
+
+    return () => {
+      window.removeEventListener('smart-rfid-frontend-settings-change', refreshFrontendSettings);
+      window.removeEventListener('storage', refreshFrontendSettings);
+    };
+  }, []);
+
   const eventActivity = useMemo(() => {
     return events
       .map(event => {
@@ -717,14 +1101,43 @@ export default function Simulation() {
           item: { id: number; name: string };
           from_zone: { name: string };
           to_zone: { name: string };
+          reader: { name?: string };
+          raw_payload: {
+            rpi_id?: string;
+            reader?: string;
+            reader_id?: string;
+            label?: string;
+            tag?: string;
+            rssi?: number;
+            distance?: string;
+            timestamp?: string;
+            _rfid_logic?: {
+              case?: string;
+              gate_event_id?: number;
+              entry_approved?: boolean;
+              qty_before?: number;
+              qty_after?: number;
+            };
+          };
           movement_detected: boolean;
           received_at: string;
           detected_at: string;
         }> | null;
+        const rawPayload = payload?.raw_payload;
+        const rawLogic = rawPayload?._rfid_logic;
+        const inventoryItem = items.find(item => (
+          item.id === event.item_id ||
+          item.id === payload?.item?.id ||
+          (rawPayload?.tag && item.rfid_tag_code === rawPayload.tag) ||
+          (event.tag && item.rfid_tag_code === event.tag) ||
+          (rawPayload?.label && item.label === rawPayload.label) ||
+          (event.label && item.label === event.label)
+        ));
 
         const itemName =
           payload?.item?.name ||
-          items.find(item => item.id === event.item_id)?.name ||
+          rawPayload?.label ||
+          inventoryItem?.name ||
           event.label ||
           `Item ${event.item_id}`;
         const fromZoneName = payload?.from_zone?.name || null;
@@ -750,11 +1163,27 @@ export default function Simulation() {
           tone,
           title,
           itemName,
+          itemId: payload?.item?.id || inventoryItem?.id || event.item_id,
+          thumbnail: inventoryItem?.thumbnail || null,
+          sku: inventoryItem?.sku || null,
+          status: inventoryItem?.status || null,
+          category: inventoryItem ? `${inventoryItem.main_cat} / ${inventoryItem.sub_cat}` : null,
+          totalQty: inventoryItem?.total_qty ?? null,
           fromZoneName,
           toZoneName,
           movementDetected,
-          tag: event.tag,
-          timestamp: payload?.received_at || payload?.detected_at || event.received_at || event.detected_at,
+          tag: rawPayload?.tag || event.tag,
+          readerName: payload?.reader?.name || rawPayload?.reader || event.reader_name || null,
+          readerDeviceId: rawPayload?.reader_id || event.reader_device_code || null,
+          rpiId: rawPayload?.rpi_id || event.rpi_device_code || null,
+          rssi: rawPayload?.rssi ?? event.rssi ?? null,
+          distance: rawPayload?.distance || event.distance || null,
+          logicCase: rawLogic?.case || null,
+          gateEventId: rawLogic?.gate_event_id ?? null,
+          entryApproved: rawLogic?.entry_approved ?? null,
+          qtyBefore: rawLogic?.qty_before ?? null,
+          qtyAfter: rawLogic?.qty_after ?? null,
+          timestamp: payload?.received_at || payload?.detected_at || rawPayload?.timestamp || event.received_at || event.detected_at,
         };
       })
       .slice(0, 8);
@@ -767,6 +1196,15 @@ export default function Simulation() {
       .map(event => {
         const payload = event.raw_payload as Partial<RfidLiveSocketEvent> | null;
         const tone = getRfidEventTone(payload?.type);
+        const visualKey = `${event.id}-${payload?.type || 'rfid_detection_event'}`;
+
+        if (
+          (tone === 'security-warning' || tone === 'operation-warning') &&
+          dismissedWarningKeys.has(visualKey)
+        ) {
+          return null;
+        }
+
         const zoneId =
           payload?.to_zone?.id ??
           payload?.from_zone?.id ??
@@ -789,7 +1227,7 @@ export default function Simulation() {
         const itemName = payload?.item?.name || event.label || payload?.tag || event.tag;
 
         return {
-          id: `${event.id}-${payload?.type || 'rfid_detection_event'}`,
+          id: visualKey,
           tone,
           label: `${style.text}: ${itemName}`,
           position: [x, y, z] as [number, number, number],
@@ -798,7 +1236,108 @@ export default function Simulation() {
       })
       .filter((visual): visual is SceneEventVisual => Boolean(visual))
       .slice(0, 6);
-  }, [events, readers, zones]);
+  }, [dismissedWarningKeys, events, readers, zones]);
+
+  useEffect(() => {
+    const latestWarningEntry = eventActivity.find(entry => (
+      entry.tone === 'security-warning' || entry.tone === 'operation-warning'
+    ));
+
+    if (!latestWarningEntry) {
+      return;
+    }
+
+    const warningTone = latestWarningEntry.tone;
+
+    if (warningTone !== 'security-warning' && warningTone !== 'operation-warning') {
+      return;
+    }
+
+    const ageMs = Date.now() - new Date(latestWarningEntry.timestamp).getTime();
+
+    if (!Number.isFinite(ageMs) || ageMs > 30000) {
+      return;
+    }
+
+    const latestWarning: WarningOverlayEvent = {
+      ...latestWarningEntry,
+      tone: warningTone,
+    };
+
+    if (dismissedWarningKeys.has(`${latestWarning.id}-${latestWarning.type}`)) {
+      return;
+    }
+
+    setActiveWarning(latestWarning);
+  }, [dismissedWarningKeys, eventActivity]);
+
+  useEffect(() => {
+    if (!activeWarning) {
+      return;
+    }
+
+    playAlertSiren(activeWarning.tone);
+    const intervalId = window.setInterval(() => {
+      playAlertSiren(activeWarning.tone);
+    }, activeWarning.tone === 'security-warning' ? 1100 : 1450);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeWarning]);
+
+  useEffect(() => {
+    const latestMovementEntry = eventActivity.find(entry => (
+      entry.type === 'rfid_registered_entry_approved' || entry.type === 'rfid_ordered_exit_approved'
+    ));
+
+    if (!latestMovementEntry) {
+      return;
+    }
+
+    const movementType = latestMovementEntry.type;
+
+    if (movementType !== 'rfid_registered_entry_approved' && movementType !== 'rfid_ordered_exit_approved') {
+      return;
+    }
+
+    const movementTone = latestMovementEntry.tone;
+
+    if (movementTone !== 'entry' && movementTone !== 'exit-approved') {
+      return;
+    }
+
+    const ageMs = Date.now() - new Date(latestMovementEntry.timestamp).getTime();
+
+    if (!Number.isFinite(ageMs) || ageMs > 30000) {
+      return;
+    }
+
+    const latestMovement: QuantityMovementEvent = {
+      id: latestMovementEntry.id,
+      type: movementType,
+      tone: movementTone,
+      itemId: latestMovementEntry.itemId,
+      itemName: latestMovementEntry.itemName,
+      thumbnail: latestMovementEntry.thumbnail,
+      fromZoneName: latestMovementEntry.fromZoneName,
+      toZoneName: latestMovementEntry.toZoneName,
+      tag: latestMovementEntry.tag,
+      readerName: latestMovementEntry.readerName,
+      readerDeviceId: latestMovementEntry.readerDeviceId,
+      rpiId: latestMovementEntry.rpiId,
+      rssi: latestMovementEntry.rssi,
+      distance: latestMovementEntry.distance,
+      logicCase: latestMovementEntry.logicCase,
+      gateEventId: latestMovementEntry.gateEventId,
+      entryApproved: latestMovementEntry.entryApproved,
+      qtyBefore: latestMovementEntry.qtyBefore,
+      qtyAfter: latestMovementEntry.qtyAfter,
+      timestamp: latestMovementEntry.timestamp,
+    };
+
+    setActiveQuantityMovement(latestMovement);
+  }, [eventActivity]);
 
   const handlePointerMissed = () => {
     setSelectedType(null);
@@ -967,6 +1506,34 @@ export default function Simulation() {
     return nextItemsWithTargets;
   }, [items, zones, readers]);
 
+  const registeredEntryStarts = useMemo(() => {
+    const entryStarts = new Map<number, RegisteredEntryStart>();
+
+    if (activeQuantityMovement?.type !== 'rfid_registered_entry_approved' || !activeQuantityMovement.itemId) {
+      return entryStarts;
+    }
+
+    const gateZone = zones.find(zone => (
+      shouldRenderGateZone(zone, readers) &&
+      readers.some(reader => reader.zone_id === zone.id && isGateReader(reader))
+    )) || zones.find(zone => shouldRenderGateZone(zone, readers));
+
+    if (!gateZone) {
+      return entryStarts;
+    }
+
+    const [baseX, baseY, baseZ] = getZoneBasePosition(gateZone, zones, readers);
+    const [offsetX, offsetY, offsetZ] = getZoneSlotOffset(gateZone, 0, readers);
+    const startPosition = new THREE.Vector3(baseX + offsetX, Math.max(baseY + offsetY, 0.275), baseZ + offsetZ);
+
+    entryStarts.set(activeQuantityMovement.itemId, {
+      key: `${activeQuantityMovement.id}-${activeQuantityMovement.timestamp}`,
+      position: startPosition,
+    });
+
+    return entryStarts;
+  }, [activeQuantityMovement, readers, zones]);
+
   const selectedItem = selectedType === 'item' ? items.find(i => i.id === selectedId) : null;
   const activeItem = selectedItemDetails?.id === selectedId ? selectedItemDetails : selectedItem;
   const selectedItemZone = activeItem ? zones.find(z => z.id === activeItem.current_zone_id) : null;
@@ -978,6 +1545,28 @@ export default function Simulation() {
     }
 
     setCameraFocusPoint(targetItem.targetPosition.clone());
+  };
+
+  const handleItemMovementComplete = (itemId: number) => {
+    setActiveQuantityMovement(currentMovement => (
+      currentMovement?.itemId === itemId
+        ? null
+        : currentMovement
+    ));
+  };
+
+  const dismissActiveWarning = () => {
+    setActiveWarning(currentWarning => {
+      if (currentWarning) {
+        setDismissedWarningKeys(currentKeys => {
+          const nextKeys = new Set(currentKeys);
+          nextKeys.add(`${currentWarning.id}-${currentWarning.type}`);
+          return nextKeys;
+        });
+      }
+
+      return null;
+    });
   };
 
   return (
@@ -1000,6 +1589,8 @@ export default function Simulation() {
             </div>
           </div>
         ) : null}
+        {activeWarning && <WarningAlarmOverlay warning={activeWarning} onDismiss={dismissActiveWarning} />}
+        {!activeWarning && activeQuantityMovement && <ActiveMovementCard event={activeQuantityMovement} />}
         {/* Search Bar */}
         <div className="absolute top-6 left-6 z-[110] w-72">
           <div className="relative">
@@ -1142,8 +1733,12 @@ export default function Simulation() {
                   <div key={`${entry.id}-${entry.timestamp}`} className="rounded-xl border border-slate-200/80 bg-white/55 px-3 py-2.5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 gap-2">
-                        <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${toneClass}`}>
-                          <Icon className="h-3.5 w-3.5" />
+                        <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg ${toneClass}`}>
+                          {entry.thumbnail ? (
+                            <img src={entry.thumbnail} alt={entry.itemName} className="h-full w-full object-cover" />
+                          ) : (
+                            <Icon className="h-4 w-4" />
+                          )}
                         </span>
                         <div className="min-w-0">
                           <div className="flex min-w-0 items-center gap-2">
@@ -1159,6 +1754,11 @@ export default function Simulation() {
                           </p>
                           {entry.tag && (
                             <p className="mt-1 truncate font-mono text-[10px] text-slate-400">{entry.tag}</p>
+                          )}
+                          {entry.qtyBefore !== null && entry.qtyAfter !== null && (
+                            <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] font-semibold text-slate-600">
+                              Qty {entry.qtyBefore} -&gt; {entry.qtyAfter}
+                            </p>
                           )}
                         </div>
                       </div>
@@ -1594,7 +2194,10 @@ export default function Simulation() {
               key={item.id} 
               item={item} 
               targetPosition={item.targetPosition} 
+              movementStart={registeredEntryStarts.get(item.id)}
+              movementSimulationSeconds={frontendSettings.movementSimulationSeconds}
               isSelected={selectedType === 'item' && selectedId === item.id}
+              onMovementComplete={handleItemMovementComplete}
               onClick={() => { setSelectedType('item'); setSelectedId(item.id); }}
             />
           ))}

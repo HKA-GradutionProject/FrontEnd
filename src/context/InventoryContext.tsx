@@ -325,6 +325,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const rpiDevice = liveEvent.rpi || liveEvent.rpi_device;
     const eventZoneId =
       liveEvent.to_zone?.id ||
+      liveEvent.reader?.zone_id ||
       liveEvent.from_zone?.id ||
       liveEvent.item?.current_zone_id ||
       liveEvent.variant?.current_zone_id ||
@@ -365,9 +366,16 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           name: liveEvent.item.name || item.name,
           current_zone_id:
             liveEvent.to_zone?.id ??
+            liveEvent.reader?.zone_id ??
             liveEvent.item.current_zone_id ??
             liveEvent.variant?.current_zone_id ??
             item.current_zone_id,
+          total_qty:
+            liveEvent.type === 'rfid_registered_entry_approved'
+              ? item.total_qty + 1
+              : liveEvent.type === 'rfid_ordered_exit_approved'
+                ? Math.max(0, item.total_qty - 1)
+                : item.total_qty,
           status:
             liveEvent.type === 'rfid_security_warning'
               ? 'alert'
