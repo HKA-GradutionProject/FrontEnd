@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useInventory } from '../context/InventoryContext';
-import { RadioReceiver, Package2, X, Image as ImageIcon, Cpu, Link as LinkIcon, Info, Search, Loader2, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, ArrowRight, History, ShieldAlert, TriangleAlert, CheckCircle2, LogOut } from 'lucide-react';
+import { RadioReceiver, Package2, X, Image as ImageIcon, Cpu, Link as LinkIcon, Info, Search, Loader2, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, ArrowRight, History, ShieldAlert, TriangleAlert, CheckCircle2, LogOut, RotateCcw } from 'lucide-react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Text, Grid, RoundedBox, Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -1046,6 +1047,7 @@ function CameraFocusController({
 }
 
 export default function Simulation() {
+  const navigate = useNavigate();
   const { items, zones, zoneSummary, readers, events, loading, loaded, liveConnectionStatus } = useInventory();
   const [selectedType, setSelectedType] = useState<'item' | 'reader' | 'rpi' | null>(null);
   const [selectedId, setSelectedId] = useState<number | string | null>(null);
@@ -1062,6 +1064,7 @@ export default function Simulation() {
   const [activeQuantityMovement, setActiveQuantityMovement] = useState<QuantityMovementEvent | null>(null);
   const [dismissedWarningKeys, setDismissedWarningKeys] = useState<Set<string>>(() => new Set());
   const [frontendSettings, setFrontendSettings] = useState(() => loadFrontendSettings());
+  const [resetAnimationVersion, setResetAnimationVersion] = useState(0);
   const controlsRef = useRef<any>(null);
   const itemZoneAssignmentRef = useRef(new Map<number, number>());
   const itemSlotAssignmentRef = useRef(new Map<number, number>());
@@ -1534,9 +1537,38 @@ export default function Simulation() {
     return entryStarts;
   }, [activeQuantityMovement, readers, zones]);
 
+  const resetAnimationStarts = useMemo(() => {
+    const resetStarts = new Map<number, RegisteredEntryStart>();
+
+    if (resetAnimationVersion === 0) {
+      return resetStarts;
+    }
+
+    itemsWithTargets.forEach((item, index) => {
+      const direction = index % 2 === 0 ? -1 : 1;
+      const laneOffset = ((index % 3) - 1) * 0.6;
+      const startPosition = item.targetPosition.clone().add(
+        new THREE.Vector3(direction * 2.2, 0, laneOffset),
+      );
+
+      startPosition.y = Math.max(0.275, item.targetPosition.y);
+      resetStarts.set(item.id, {
+        key: `reset-${resetAnimationVersion}-${item.id}`,
+        position: startPosition,
+      });
+    });
+
+    return resetStarts;
+  }, [itemsWithTargets, resetAnimationVersion]);
+
   const selectedItem = selectedType === 'item' ? items.find(i => i.id === selectedId) : null;
   const activeItem = selectedItemDetails?.id === selectedId ? selectedItemDetails : selectedItem;
   const selectedItemZone = activeItem ? zones.find(z => z.id === activeItem.current_zone_id) : null;
+  const activeItemTimelineVariant = activeItem?.variants?.find(variant => (
+    variant.rfid_tag_code &&
+    activeItem.rfid_tag_code &&
+    variant.rfid_tag_code === activeItem.rfid_tag_code
+  )) || activeItem?.variants?.find(variant => variant.current_zone_id === activeItem.current_zone_id) || activeItem?.variants?.[0] || null;
 
   const focusSceneOnItem = (itemId: number) => {
     const targetItem = itemsWithTargets.find(item => item.id === itemId);
@@ -1545,6 +1577,19 @@ export default function Simulation() {
     }
 
     setCameraFocusPoint(targetItem.targetPosition.clone());
+  };
+
+  const handleResetAnimation = () => {
+    setActiveQuantityMovement(null);
+    setResetAnimationVersion(version => version + 1);
+  };
+
+  const handleOpenMovementTimeline = () => {
+    if (!activeItemTimelineVariant) {
+      return;
+    }
+
+    navigate(`/movement-timeline?variant_id=${activeItemTimelineVariant.id}`);
   };
 
   const handleItemMovementComplete = (itemId: number) => {
@@ -1577,7 +1622,19 @@ export default function Simulation() {
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg>
           <span className="text-slate-900 font-bold">Wharehouse</span>
         </div>
-        {isSimulationLoading && <Loader2 className="w-5 h-5 animate-spin text-slate-500" />}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleResetAnimation}
+            disabled={isSimulationLoading || itemsWithTargets.length === 0}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Reset warehouse animation"
+          >
+            <RotateCcw className="h-4 w-4" />
+            Reset Animation
+          </button>
+          {isSimulationLoading && <Loader2 className="w-5 h-5 animate-spin text-slate-500" />}
+        </div>
       </div>
 
       <div className="relative flex-1 min-h-0 w-full overflow-hidden bg-[#EBEEF2] shadow-inner">
@@ -1850,6 +1907,20 @@ export default function Simulation() {
               </div>
 
               <div className="flex flex-col gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleOpenMovementTimeline}
+                  disabled={!activeItemTimelineVariant}
+                  className="mb-2 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400"
+                >
+                  <History className="h-4 w-4" />
+                  Movement Timeline
+                  {activeItemTimelineVariant && (
+                    <span className="rounded bg-white/80 px-1.5 py-0.5 font-mono text-[10px] text-blue-600">
+                      Variant {activeItemTimelineVariant.id}
+                    </span>
+                  )}
+                </button>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-slate-500 text-xs font-medium">Item ID:</span>
                   <span className="font-mono text-[10px] text-slate-600">{activeItem.id}</span>
@@ -2194,7 +2265,7 @@ export default function Simulation() {
               key={item.id} 
               item={item} 
               targetPosition={item.targetPosition} 
-              movementStart={registeredEntryStarts.get(item.id)}
+              movementStart={resetAnimationStarts.get(item.id) ?? registeredEntryStarts.get(item.id)}
               movementSimulationSeconds={frontendSettings.movementSimulationSeconds}
               isSelected={selectedType === 'item' && selectedId === item.id}
               onMovementComplete={handleItemMovementComplete}

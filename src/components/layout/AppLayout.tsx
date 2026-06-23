@@ -1,14 +1,18 @@
-import { useEffect } from 'react';
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Map, List, Package2, ShieldAlert, Cpu, ShoppingCart, UsersRound, Settings as SettingsIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { LayoutDashboard, Map, List, Package2, ShieldAlert, Cpu, ShoppingCart, UsersRound, Settings as SettingsIcon, Route, LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Toaster } from "@/components/ui/sonner";
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useInventory } from '../../context/InventoryContext';
+import { clearStoredAuthUser } from '../../lib/auth';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Wharehouse', href: '/simulation', icon: Map },
   { name: 'RFID Events', href: '/events', icon: List },
+  { name: 'Movement Timeline', href: '/movement-timeline', icon: Route },
   { name: 'Items', href: '/items', icon: Package2 },
   { name: 'Readers / Devices', href: '/readers', icon: Cpu },
   { name: 'Orders', href: '/orders', icon: ShoppingCart },
@@ -18,7 +22,9 @@ const navigation = [
 ];
 
 export default function AppLayout() {
+  const navigate = useNavigate();
   const { pathname } = useLocation();
+  const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
   const isWarehouseRoute = pathname === '/simulation';
   const {
     fetchItems,
@@ -30,6 +36,12 @@ export default function AppLayout() {
     connectLiveEvents,
     disconnectLiveEvents,
   } = useInventory();
+
+  const handleLogout = () => {
+    disconnectLiveEvents();
+    clearStoredAuthUser();
+    navigate('/login', { replace: true });
+  };
 
   useEffect(() => {
     let loaders: Array<() => Promise<void>> = [];
@@ -93,8 +105,8 @@ export default function AppLayout() {
       <div className="hidden w-64 md:flex md:flex-col bg-[#0F172A] text-white shrink-0 sticky top-0 h-screen">
         <div className="flex flex-col flex-grow pt-5 overflow-y-auto">
           <div className="flex items-center flex-shrink-0 px-6 gap-3">
-            <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
-              <Cpu className="h-5 w-5 text-white" />
+            <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg bg-white">
+              <img className="h-full w-full object-cover" src="/project-icon.png" alt="SmartRFID" />
             </div>
             <h1 className="text-lg font-bold tracking-tight text-white">
               SmartRFID
@@ -130,6 +142,14 @@ export default function AppLayout() {
             ))}
           </div>
           <div className="p-6 mt-auto border-t border-slate-800">
+            <button
+              type="button"
+              onClick={() => setIsLogoutDialogOpen(true)}
+              className="mb-4 group flex w-full items-center rounded-md px-4 py-3 text-sm font-medium text-slate-400 transition-all hover:bg-red-500/10 hover:text-red-300"
+            >
+              <LogOut className="mr-3 h-5 w-5 flex-shrink-0 text-slate-400 group-hover:text-red-300" aria-hidden="true" />
+              Logout
+            </button>
             <div className="flex items-center gap-3 bg-slate-800/50 p-3 rounded-lg">
               <div className="w-2 h-2 rounded-full bg-green-500"></div>
               <span className="text-xs text-slate-300 font-mono">System: ONLINE</span>
@@ -143,6 +163,24 @@ export default function AppLayout() {
           <Outlet />
         </main>
       </div>
+      <Dialog open={isLogoutDialogOpen} onOpenChange={setIsLogoutDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Log out?</DialogTitle>
+            <DialogDescription>
+              You will be signed out of SmartRFID and returned to the login screen.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" />}>
+              Cancel
+            </DialogClose>
+            <Button className="bg-red-600 text-white hover:bg-red-700" onClick={handleLogout}>
+              Logout
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Toaster />
     </div>
   );

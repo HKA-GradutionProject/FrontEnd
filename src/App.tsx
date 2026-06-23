@@ -11,6 +11,7 @@ import { getStoredAuthUser } from './lib/auth';
 import Dashboard from './pages/Dashboard';
 import Simulation from './pages/Simulation';
 import Events from './pages/Events';
+import MovementTimeline from './pages/MovementTimeline';
 import Items from './pages/Items';
 import Readers from './pages/Readers';
 import Alerts from './pages/Alerts';
@@ -55,6 +56,7 @@ export default function App() {
               <Route index element={<Dashboard />} />
               <Route path="simulation" element={<Simulation />} />
               <Route path="events" element={<Events />} />
+              <Route path="movement-timeline" element={<MovementTimeline />} />
               <Route path="items" element={<Items />} />
               <Route path="readers" element={<Readers />} />
               <Route path="orders" element={<Orders />} />

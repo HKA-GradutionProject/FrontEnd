@@ -101,6 +101,36 @@ export interface RFIDEvent {
   raw_payload: any;
 }
 
+export interface VariantMovementTimelineZone {
+  id: number;
+  name: string;
+  zone_type: string;
+}
+
+export interface VariantMovementTimelineReader {
+  id: number;
+  name: string;
+  reader_device_code: string;
+}
+
+export interface VariantMovementTimelineMovement {
+  event_id: number;
+  variant_id: number;
+  item_id: number;
+  previous_zone: VariantMovementTimelineZone | null;
+  current_zone: VariantMovementTimelineZone | null;
+  reader: VariantMovementTimelineReader | null;
+  timestamp: string;
+  event_type: string;
+}
+
+export interface VariantMovementTimeline {
+  variant_id: number;
+  item_id: number;
+  movements_count: number;
+  movements: VariantMovementTimelineMovement[];
+}
+
 export interface RfidLiveSocketItem {
   id: number;
   name: string;

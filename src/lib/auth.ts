@@ -48,3 +48,12 @@ export function storeAuthUser(user: AuthUser, remember: boolean) {
   window.sessionStorage.setItem(AUTH_USER_STORAGE_KEY, serializedUser);
   window.localStorage.removeItem(AUTH_USER_STORAGE_KEY);
 }
+
+export function clearStoredAuthUser() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.sessionStorage.removeItem(AUTH_USER_STORAGE_KEY);
+  window.localStorage.removeItem(AUTH_USER_STORAGE_KEY);
+}
