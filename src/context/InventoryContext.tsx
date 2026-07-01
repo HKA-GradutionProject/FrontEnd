@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { Item, Reader, RFIDEvent, Zone, Alert, Order, RpiDevice, ZoneSummary, RfidLiveSocketEvent, Employee, SystemSettings } from '../types';
-import { mockItems, mockReaders, mockEvents, mockZones, mockAlerts, mockRpiDevices } from '../data/mockData';
+import { mockItems, mockEvents, mockAlerts } from '../data/mockData';
 import { toast } from 'sonner';
 import { fetchApiResource, patchApiResource, postApiResource } from '@/lib/api';
 import { getWebSocketUrl } from '../config';
@@ -108,6 +108,36 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function normalizeTypeValue(value: string | null | undefined) {
+  return value?.trim().toLowerCase().replace(/[\s-]+/g, '_') || '';
+}
+
+function normalizeReader(reader: Reader): Reader {
+  const readerType = normalizeTypeValue(reader.reader_type);
+
+  return {
+    ...reader,
+    reader_type: readerType === 'gate' || readerType === 'gate_reader' || readerType === 'entry_reader' || readerType === 'exit_reader'
+      ? 'gate_reader'
+      : readerType === 'shelf' || readerType === 'normal' || readerType === 'normal_reader' || readerType === 'shelf_reader'
+        ? 'shelf_reader'
+        : reader.reader_type,
+  };
+}
+
+function normalizeZone(zone: Zone): Zone {
+  const zoneType = normalizeTypeValue(zone.zone_type);
+
+  return {
+    ...zone,
+    zone_type: zoneType === 'gate' || zoneType === 'gate_reader' || zoneType === 'entry' || zoneType === 'exit' || zoneType === 'entry_gate' || zoneType === 'exit_gate'
+      ? 'gate_reader'
+      : zoneType === 'shelf' || zoneType === 'normal' || zoneType === 'normal_reader' || zoneType === 'shelf_reader' || zoneType === 'storage'
+        ? 'shelf_reader'
+        : zone.zone_type,
+  };
+}
+
 function loadStoredSettings(): SystemSettings {
   if (typeof window === 'undefined') {
     return DEFAULT_SYSTEM_SETTINGS;
@@ -194,12 +224,12 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setLoading(prev => ({ ...prev, readers: true }));
     try {
       const data = await fetchApiResource<Reader[]>('/rfid-readers');
-      setReaders(data);
+      setReaders(data.map(normalizeReader));
       setErrors(prev => ({ ...prev, readers: null }));
     } catch (e) {
       console.error("Failed to fetch readers", e);
       setErrors(prev => ({ ...prev, readers: getErrorMessage(e, 'Failed to fetch readers') }));
-      setReaders(mockReaders);
+      setReaders([]);
     } finally {
       setLoading(prev => ({ ...prev, readers: false }));
       setLoaded(prev => ({ ...prev, readers: true }));
@@ -226,12 +256,12 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setLoading(prev => ({ ...prev, zones: true }));
     try {
       const data = await fetchApiResource<Zone[]>('/zones');
-      setZones(data);
+      setZones(data.map(normalizeZone));
       setErrors(prev => ({ ...prev, zones: null }));
     } catch (e) {
       console.error("Failed to fetch zones", e);
       setErrors(prev => ({ ...prev, zones: getErrorMessage(e, 'Failed to fetch zones') }));
-      setZones(mockZones);
+      setZones([]);
     } finally {
       setLoading(prev => ({ ...prev, zones: false }));
       setLoaded(prev => ({ ...prev, zones: true }));
@@ -263,7 +293,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     } catch (e) {
       console.error("Failed to fetch rpi devices", e);
       setErrors(prev => ({ ...prev, rpiDevices: getErrorMessage(e, 'Failed to fetch rpi devices') }));
-      setRpiDevices(mockRpiDevices);
+      setRpiDevices([]);
     } finally {
       setLoading(prev => ({ ...prev, rpiDevices: false }));
       setLoaded(prev => ({ ...prev, rpiDevices: true }));

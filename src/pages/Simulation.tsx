@@ -68,16 +68,31 @@ function shouldRenderShelfZone(zone: Zone, readers: Reader[]) {
   return (isShelfZone(zone) || zoneHasShelfReader(zone, readers)) && !shouldRenderGateZone(zone, readers);
 }
 
+function getGateZonePosition(index: number, count: number): [number, number, number] {
+  const gateSpacing = 3.4;
+  const startX = -((count - 1) * gateSpacing) / 2;
+
+  return [startX + index * gateSpacing, 0, 6];
+}
+
+function getShelfZonePosition(index: number, count: number): [number, number, number] {
+  const shelfSpacingX = 3.4;
+  const shelfSpacingZ = 2.8;
+  const columns = Math.min(4, Math.max(1, count));
+  const shelfColumn = index % columns;
+  const shelfRow = Math.floor(index / columns);
+  const startX = -((columns - 1) * shelfSpacingX) / 2;
+
+  return [startX + shelfColumn * shelfSpacingX, 0, -3.2 + shelfRow * shelfSpacingZ];
+}
+
 function getZoneBasePosition(zone: Zone, zones: Zone[], readers: Reader[] = []): [number, number, number] {
   const sortedZones = [...zones].sort((left, right) => left.id - right.id);
 
   if (shouldRenderGateZone(zone, readers)) {
     const gateZones = sortedZones.filter(candidateZone => shouldRenderGateZone(candidateZone, readers));
     const gateIndex = Math.max(0, gateZones.findIndex(candidateZone => candidateZone.id === zone.id));
-    const gateSpacing = 3.4;
-    const startX = -((gateZones.length - 1) * gateSpacing) / 2;
-
-    return [startX + gateIndex * gateSpacing, 0, 6];
+    return getGateZonePosition(gateIndex, gateZones.length);
   }
 
   const shelfZones = sortedZones.filter(candidateZone => shouldRenderShelfZone(candidateZone, readers));
@@ -85,29 +100,87 @@ function getZoneBasePosition(zone: Zone, zones: Zone[], readers: Reader[] = []):
     0,
     shelfZones.findIndex(candidateZone => candidateZone.id === zone.id)
   );
-  const shelfSpacingX = 3.4;
-  const shelfSpacingZ = 2.8;
-  const columns = Math.min(4, Math.max(1, shelfZones.length));
-  const shelfColumn = shelfIndex % columns;
-  const shelfRow = Math.floor(shelfIndex / columns);
-  const startX = -((columns - 1) * shelfSpacingX) / 2;
-  const sx = startX + shelfColumn * shelfSpacingX;
-  const sz = -3.2 + shelfRow * shelfSpacingZ;
 
   if (!shouldRenderShelfZone(zone, readers)) {
     const nonGateZones = sortedZones
       .filter(candidateZone => !shouldRenderGateZone(candidateZone, readers));
     const fallbackIndex = nonGateZones
       .findIndex(candidateZone => candidateZone.id === zone.id);
-    const fallbackColumns = Math.min(4, Math.max(1, nonGateZones.length));
-    const fallbackColumn = Math.max(0, fallbackIndex) % fallbackColumns;
-    const fallbackRow = Math.floor(Math.max(0, fallbackIndex) / fallbackColumns);
-    const fallbackStartX = -((fallbackColumns - 1) * shelfSpacingX) / 2;
 
-    return [fallbackStartX + fallbackColumn * shelfSpacingX, 0, -3.2 + fallbackRow * shelfSpacingZ];
+    return getShelfZonePosition(Math.max(0, fallbackIndex), nonGateZones.length);
   }
 
-  return [sx, 0, sz];
+  return getShelfZonePosition(shelfIndex, shelfZones.length);
+}
+
+type WarehouseZoneVisual = {
+  key: string;
+  zone: Zone;
+  readers: Reader[];
+  label: string;
+  isGate: boolean;
+  position: [number, number, number];
+};
+
+function getWarehouseZoneVisuals(zones: Zone[], readers: Reader[]): WarehouseZoneVisual[] {
+  const sortedZones = [...zones].sort((left, right) => left.id - right.id);
+  const gateNodes = sortedZones
+    .filter(zone => shouldRenderGateZone(zone, readers))
+    .map(zone => ({
+      key: `zone-${zone.id}`,
+      zone,
+      readers: readers.filter(reader => reader.zone_id === zone.id),
+      label: zone.name,
+      isGate: true,
+    }));
+  const shelfNodes = sortedZones
+    .filter(zone => shouldRenderShelfZone(zone, readers))
+    .flatMap(zone => {
+      const zoneReaders = readers.filter(reader => reader.zone_id === zone.id);
+      const shelfReaders = zoneReaders.filter(reader => isShelfReader(reader));
+
+      if (getZoneType(zone) === 'shelf_reader' && shelfReaders.length > 1) {
+        return shelfReaders.map(reader => ({
+          key: `zone-${zone.id}-reader-${reader.id}`,
+          zone,
+          readers: [reader],
+          label: reader.name || zone.name,
+          isGate: false,
+        }));
+      }
+
+      return [{
+        key: `zone-${zone.id}`,
+        zone,
+        readers: zoneReaders,
+        label: zone.name,
+        isGate: false,
+      }];
+    });
+  const fallbackNodes = sortedZones
+    .filter(zone => !shouldRenderGateZone(zone, readers) && !shouldRenderShelfZone(zone, readers))
+    .map(zone => ({
+      key: `zone-${zone.id}`,
+      zone,
+      readers: readers.filter(reader => reader.zone_id === zone.id),
+      label: zone.name,
+      isGate: false,
+    }));
+
+  return [
+    ...gateNodes.map((node, index) => ({
+      ...node,
+      position: getGateZonePosition(index, gateNodes.length),
+    })),
+    ...shelfNodes.map((node, index) => ({
+      ...node,
+      position: getShelfZonePosition(index, shelfNodes.length),
+    })),
+    ...fallbackNodes.map((node, index) => ({
+      ...node,
+      position: getShelfZonePosition(index, fallbackNodes.length),
+    })),
+  ];
 }
 
 function getZoneSlotOffset(zone: Zone | undefined, slotIndex: number, readers: Reader[] = []): [number, number, number] {
@@ -1069,6 +1142,18 @@ export default function Simulation() {
   const itemZoneAssignmentRef = useRef(new Map<number, number>());
   const itemSlotAssignmentRef = useRef(new Map<number, number>());
   const isSimulationLoading = !loaded.items || !loaded.zones || !loaded.readers || loading.items || loading.zones || loading.readers || loading.zoneSummary;
+  const warehouseZoneVisuals = useMemo(() => getWarehouseZoneVisuals(zones, readers), [zones, readers]);
+  const primaryZoneVisualPositions = useMemo(() => {
+    const positions = new Map<number, [number, number, number]>();
+
+    warehouseZoneVisuals.forEach(visual => {
+      if (!positions.has(visual.zone.id)) {
+        positions.set(visual.zone.id, visual.position);
+      }
+    });
+
+    return positions;
+  }, [warehouseZoneVisuals]);
 
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
@@ -1225,7 +1310,7 @@ export default function Simulation() {
           return null;
         }
 
-        const [x, y, z] = getZoneBasePosition(zone, zones, readers);
+        const [x, y, z] = primaryZoneVisualPositions.get(zone.id) ?? getZoneBasePosition(zone, zones, readers);
         const style = RFID_EVENT_STYLES[tone];
         const itemName = payload?.item?.name || event.label || payload?.tag || event.tag;
 
@@ -1239,7 +1324,7 @@ export default function Simulation() {
       })
       .filter((visual): visual is SceneEventVisual => Boolean(visual))
       .slice(0, 6);
-  }, [dismissedWarningKeys, events, readers, zones]);
+  }, [dismissedWarningKeys, events, primaryZoneVisualPositions, readers, zones]);
 
   useEffect(() => {
     const latestWarningEntry = eventActivity.find(entry => (
@@ -1482,7 +1567,7 @@ export default function Simulation() {
           zone.id,
           previousZoneId === zone.id ? previousSlot : undefined,
         );
-        const basePos = getZoneBasePosition(zone, zones, readers);
+        const basePos = primaryZoneVisualPositions.get(zone.id) ?? getZoneBasePosition(zone, zones, readers);
         const [offsetX, offsetY, offsetZ] = getZoneSlotOffset(zone, slotIndex, readers);
 
         nextItemZoneAssignments.set(item.id, zone.id);
@@ -1507,7 +1592,7 @@ export default function Simulation() {
     itemSlotAssignmentRef.current = nextItemSlotAssignments;
 
     return nextItemsWithTargets;
-  }, [items, zones, readers]);
+  }, [items, zones, readers, primaryZoneVisualPositions]);
 
   const registeredEntryStarts = useMemo(() => {
     const entryStarts = new Map<number, RegisteredEntryStart>();
@@ -1525,7 +1610,7 @@ export default function Simulation() {
       return entryStarts;
     }
 
-    const [baseX, baseY, baseZ] = getZoneBasePosition(gateZone, zones, readers);
+    const [baseX, baseY, baseZ] = primaryZoneVisualPositions.get(gateZone.id) ?? getZoneBasePosition(gateZone, zones, readers);
     const [offsetX, offsetY, offsetZ] = getZoneSlotOffset(gateZone, 0, readers);
     const startPosition = new THREE.Vector3(baseX + offsetX, Math.max(baseY + offsetY, 0.275), baseZ + offsetZ);
 
@@ -1535,7 +1620,7 @@ export default function Simulation() {
     });
 
     return entryStarts;
-  }, [activeQuantityMovement, readers, zones]);
+  }, [activeQuantityMovement, readers, zones, primaryZoneVisualPositions]);
 
   const resetAnimationStarts = useMemo(() => {
     const resetStarts = new Map<number, RegisteredEntryStart>();
@@ -2169,15 +2254,13 @@ export default function Simulation() {
           <CameraFocusController focusPoint={cameraFocusPoint} controlsRef={controlsRef} />
 
           {/* Render Zones */}
-          {zones.map(zone => {
-            const zoneReaders = readers.filter(r => r.zone_id === zone.id);
-            const isGate = shouldRenderGateZone(zone, readers);
-            const pos = getZoneBasePosition(zone, zones, readers);
+          {warehouseZoneVisuals.map(zoneVisual => {
+            const { zone, readers: zoneReaders, isGate, position: pos, label } = zoneVisual;
             const selectedZoneReader = zoneReaders.find(r => selectedType === 'reader' && selectedId === r.id);
             const rangeSpherePosition: [number, number, number] = isGate ? [0, 1.05, 0] : [0, 1.25, 0];
 
             return (
-              <group key={zone.id} position={pos}>
+              <group key={zoneVisual.key} position={pos}>
                 {selectedZoneReader && (
                   <ReaderRangeSphere
                     radius={getReaderRange(selectedZoneReader)}
@@ -2220,12 +2303,12 @@ export default function Simulation() {
                     fontWeight="bold"
                     rotation={[-Math.PI / 6, 0, 0]}
                   >
-                    {zone.name.toUpperCase()}
+                    {label.toUpperCase()}
                   </Text>
                 ) : (
                   <Html position={[0, 2.82, 1.42]} center transform sprite zIndexRange={[10, 0]}>
                     <div className="rounded-full border border-cyan-300/80 bg-slate-950/65 px-3 py-1 text-xs font-black tracking-[0.18em] text-cyan-100 shadow-[0_0_18px_rgba(56,189,248,0.9),0_0_34px_rgba(14,165,233,0.45)]">
-                      {zone.name.toUpperCase()}
+                      {label.toUpperCase()}
                     </div>
                   </Html>
                 )}

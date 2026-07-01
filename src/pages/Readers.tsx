@@ -20,6 +20,14 @@ const READER_TYPES = ['shelf_reader', 'gate_reader'];
 const selectClassName =
   'h-9 w-full rounded-md border border-input bg-white px-2.5 py-1 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50';
 
+function formatBackendResponse(data: unknown) {
+  try {
+    return JSON.stringify(data, null, 2);
+  } catch {
+    return String(data);
+  }
+}
+
 function getRequestErrorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) {
     if (error.status === 404) {
@@ -48,6 +56,28 @@ function getStatusBadgeClassName(status: string) {
   }
 
   return 'bg-gray-100 text-gray-700 hover:bg-gray-100';
+}
+
+function formatDeviceOption(device: RpiDevice) {
+  return device.name || device.device_id || `Device ${device.id}`;
+}
+
+function formatZoneOption(zone: { id: number; name: string; zone_type?: string }) {
+  return zone.name || `Zone ${zone.id}`;
+}
+
+function normalizeReaderType(value: string) {
+  const readerType = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+
+  if (['gate', 'gate_reader', 'entry_reader', 'exit_reader'].includes(readerType)) {
+    return 'gate_reader';
+  }
+
+  if (['shelf', 'shelf_reader', 'normal', 'normal_reader'].includes(readerType)) {
+    return 'shelf_reader';
+  }
+
+  return readerType || value;
 }
 
 export default function Readers() {
@@ -88,6 +118,7 @@ export default function Readers() {
   const [editReaderType, setEditReaderType] = useState('shelf_reader');
   const [editReaderStatus, setEditReaderStatus] = useState<ReaderStatus>('active');
   const [savingReaderId, setSavingReaderId] = useState<number | null>(null);
+  const [backendResponse, setBackendResponse] = useState<{ title: string; body: string } | null>(null);
 
   const isLoading =
     !loaded.readers ||
@@ -96,6 +127,20 @@ export default function Readers() {
     loading.readers ||
     loading.zones ||
     loading.rpiDevices;
+  const readerTypeOptions = useMemo(() => {
+    return Array.from(new Set([
+      ...READER_TYPES,
+      readerType,
+      editReaderType,
+      ...readers.map((reader) => reader.reader_type).filter(Boolean),
+    ].filter(Boolean)));
+  }, [editReaderType, readerType, readers]);
+  const editReaderDeviceExists = Boolean(
+    editReaderRpiDeviceId && rpiDevices.some((device) => String(device.id) === editReaderRpiDeviceId),
+  );
+  const editReaderZoneExists = Boolean(
+    editReaderZoneId && zones.some((zone) => String(zone.id) === editReaderZoneId),
+  );
 
   const rpiGroups = useMemo(() => {
     const rpiNodeIds = Array.from(new Set([
@@ -135,17 +180,23 @@ export default function Readers() {
 
     setIsCreatingDevice(true);
     try {
-      await postApiResource<RpiDevice>('/rpi-devices', {
+      const response = await postApiResource<RpiDevice>('/rpi-devices', {
         device_id: deviceId.trim(),
         name: deviceName.trim(),
         status: deviceStatus,
         last_seen_at: null,
       });
       await refreshDevicesAndReaders();
+      setBackendResponse({
+        title: 'Create Raspberry Pi device response',
+        body: formatBackendResponse(response),
+      });
       setDeviceId('');
       setDeviceName('');
       setDeviceStatus('online');
-      toast.success('Raspberry Pi device created');
+      toast.success('Raspberry Pi device created', {
+        description: response.name || response.device_id,
+      });
     } catch (error) {
       console.error('Create Raspberry Pi device failed', error);
       toast.error(getRequestErrorMessage(error, 'Create Raspberry Pi device failed'));
@@ -164,22 +215,28 @@ export default function Readers() {
 
     setIsCreatingReader(true);
     try {
-      await postApiResource<Reader>('/rfid-readers', {
+      const response = await postApiResource<Reader>('/rfid-readers', {
         rpi_device_id: Number(readerRpiDeviceId),
         zone_id: Number(readerZoneId),
         name: readerName.trim(),
         reader_device_id: readerDeviceId.trim(),
         reader_id_unique: readerIdUnique,
-        reader_type: readerType,
+        reader_type: normalizeReaderType(readerType),
         status: readerStatus,
       });
       await fetchReaders();
+      setBackendResponse({
+        title: 'Create RFID reader response',
+        body: formatBackendResponse(response),
+      });
       setReaderName('');
       setReaderDeviceId('');
       setReaderIdUnique(false);
       setReaderType('shelf_reader');
       setReaderStatus('active');
-      toast.success('RFID reader created');
+      toast.success('RFID reader created', {
+        description: `${response.name} | ${response.reader_type}`,
+      });
     } catch (error) {
       console.error('Create RFID reader failed', error);
       toast.error(getRequestErrorMessage(error, 'Create RFID reader failed'));
@@ -208,13 +265,19 @@ export default function Readers() {
 
     setSavingDeviceId(device.id);
     try {
-      await patchApiResource<RpiDevice>(`/rpi-devices/${device.id}`, {
+      const response = await patchApiResource<RpiDevice>(`/rpi-devices/${device.id}`, {
         name: editDeviceName.trim(),
         status: editDeviceStatus,
       });
       await refreshDevicesAndReaders();
+      setBackendResponse({
+        title: `Update Raspberry Pi device ${device.id} response`,
+        body: formatBackendResponse(response),
+      });
       cancelEditingDevice();
-      toast.success('Raspberry Pi device updated');
+      toast.success('Raspberry Pi device updated', {
+        description: response.name || response.device_id,
+      });
     } catch (error) {
       console.error('Update Raspberry Pi device failed', error);
       toast.error(getRequestErrorMessage(error, 'Update Raspberry Pi device failed'));
@@ -230,7 +293,7 @@ export default function Readers() {
     setEditReaderName(reader.name);
     setEditReaderDeviceId(reader.reader_device_id);
     setEditReaderIdUnique(reader.reader_id_unique);
-    setEditReaderType(reader.reader_type);
+    setEditReaderType(normalizeReaderType(reader.reader_type));
     setEditReaderStatus((READER_STATUSES.includes(reader.status as ReaderStatus) ? reader.status : 'inactive') as ReaderStatus);
   };
 
@@ -253,18 +316,24 @@ export default function Readers() {
 
     setSavingReaderId(reader.id);
     try {
-      await patchApiResource<Reader>(`/rfid-readers/${reader.id}`, {
+      const response = await patchApiResource<Reader>(`/rfid-readers/${reader.id}`, {
         rpi_device_id: Number(editReaderRpiDeviceId),
         zone_id: Number(editReaderZoneId),
         name: editReaderName.trim(),
         reader_device_id: editReaderDeviceId.trim(),
         reader_id_unique: editReaderIdUnique,
-        reader_type: editReaderType,
+        reader_type: normalizeReaderType(editReaderType),
         status: editReaderStatus,
       });
       await fetchReaders();
+      setBackendResponse({
+        title: `Update RFID reader ${reader.id} response`,
+        body: formatBackendResponse(response),
+      });
       cancelEditingReader();
-      toast.success('RFID reader updated');
+      toast.success('RFID reader updated', {
+        description: `${response.name} | ${response.reader_type}`,
+      });
     } catch (error) {
       console.error('Update RFID reader failed', error);
       toast.error(getRequestErrorMessage(error, 'Update RFID reader failed'));
@@ -302,6 +371,18 @@ export default function Readers() {
       {(errors.readers || errors.rpiDevices || errors.zones) && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {errors.readers || errors.rpiDevices || errors.zones}
+        </div>
+      )}
+
+      {backendResponse && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-blue-900">{backendResponse.title}</h2>
+            <Button onClick={() => setBackendResponse(null)} size="sm" variant="ghost">
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <pre className="max-h-56 overflow-auto rounded-md bg-white p-3 text-xs text-slate-700">{backendResponse.body}</pre>
         </div>
       )}
 
@@ -371,19 +452,23 @@ export default function Readers() {
             <form className="grid gap-4 sm:grid-cols-2" onSubmit={createReader}>
               <label className="block">
                 <span className="mb-2 block text-sm font-medium text-slate-700">Raspberry Pi</span>
-                <select className={selectClassName} value={readerRpiDeviceId} onChange={(event) => setReaderRpiDeviceId(event.target.value)}>
-                  <option value="">Select device</option>
+                <select className={selectClassName} disabled={loading.rpiDevices} value={readerRpiDeviceId} onChange={(event) => setReaderRpiDeviceId(event.target.value)}>
+                  <option value="">
+                    {loading.rpiDevices ? 'Loading backend devices...' : rpiDevices.length === 0 ? 'No backend devices found' : 'Select backend device'}
+                  </option>
                   {rpiDevices.map((device) => (
-                    <option key={device.id} value={device.id}>{device.name}</option>
+                    <option key={device.id} value={device.id}>{formatDeviceOption(device)}</option>
                   ))}
                 </select>
               </label>
               <label className="block">
                 <span className="mb-2 block text-sm font-medium text-slate-700">Zone</span>
-                <select className={selectClassName} value={readerZoneId} onChange={(event) => setReaderZoneId(event.target.value)}>
-                  <option value="">Select zone</option>
+                <select className={selectClassName} disabled={loading.zones} value={readerZoneId} onChange={(event) => setReaderZoneId(event.target.value)}>
+                  <option value="">
+                    {loading.zones ? 'Loading backend zones...' : zones.length === 0 ? 'No backend zones found' : 'Select backend zone'}
+                  </option>
                   {zones.map((zone) => (
-                    <option key={zone.id} value={zone.id}>{zone.name}</option>
+                    <option key={zone.id} value={zone.id}>{formatZoneOption(zone)}</option>
                   ))}
                 </select>
               </label>
@@ -398,7 +483,7 @@ export default function Readers() {
               <label className="block">
                 <span className="mb-2 block text-sm font-medium text-slate-700">Type</span>
                 <select className={selectClassName} value={readerType} onChange={(event) => setReaderType(event.target.value)}>
-                  {READER_TYPES.map((type) => (
+                  {readerTypeOptions.map((type) => (
                     <option key={type} value={type}>{type}</option>
                   ))}
                 </select>
@@ -542,18 +627,24 @@ export default function Readers() {
                                 <div className="grid gap-3 sm:grid-cols-2">
                                   <Input value={editReaderName} onChange={(event) => setEditReaderName(event.target.value)} placeholder="Reader name" />
                                   <Input value={editReaderDeviceId} onChange={(event) => setEditReaderDeviceId(event.target.value)} placeholder="Reader identity" />
-                                  <select className={selectClassName} value={editReaderRpiDeviceId} onChange={(event) => setEditReaderRpiDeviceId(event.target.value)}>
+                                  <select className={selectClassName} disabled={loading.rpiDevices} value={editReaderRpiDeviceId} onChange={(event) => setEditReaderRpiDeviceId(event.target.value)}>
+                                    {!editReaderDeviceExists && editReaderRpiDeviceId && (
+                                      <option value={editReaderRpiDeviceId}>DB device id: {editReaderRpiDeviceId} | not returned by /rpi-devices</option>
+                                    )}
                                     {rpiDevices.map((device) => (
-                                      <option key={device.id} value={device.id}>{device.name}</option>
+                                      <option key={device.id} value={device.id}>{formatDeviceOption(device)}</option>
                                     ))}
                                   </select>
-                                  <select className={selectClassName} value={editReaderZoneId} onChange={(event) => setEditReaderZoneId(event.target.value)}>
+                                  <select className={selectClassName} disabled={loading.zones} value={editReaderZoneId} onChange={(event) => setEditReaderZoneId(event.target.value)}>
+                                    {!editReaderZoneExists && editReaderZoneId && (
+                                      <option value={editReaderZoneId}>DB zone id: {editReaderZoneId} | not returned by /zones</option>
+                                    )}
                                     {zones.map((availableZone) => (
-                                      <option key={availableZone.id} value={availableZone.id}>{availableZone.name}</option>
+                                      <option key={availableZone.id} value={availableZone.id}>{formatZoneOption(availableZone)}</option>
                                     ))}
                                   </select>
                                   <select className={selectClassName} value={editReaderType} onChange={(event) => setEditReaderType(event.target.value)}>
-                                    {READER_TYPES.map((type) => (
+                                    {readerTypeOptions.map((type) => (
                                       <option key={type} value={type}>{type}</option>
                                     ))}
                                   </select>

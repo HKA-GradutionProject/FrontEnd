@@ -1,6 +1,6 @@
 export const API_BASE_URL = import.meta.env.DEV
   ? '/api'
-  : import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+  : import.meta.env.VITE_API_BASE_URL || 'https://backend-production-8600.up.railway.app';
 
 export function getWebSocketUrl(path: string) {
   if (import.meta.env.DEV) {

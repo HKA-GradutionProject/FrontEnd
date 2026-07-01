@@ -100,6 +100,22 @@ export default function AppLayout() {
     disconnectLiveEvents,
   ]);
 
+  useEffect(() => {
+    const shouldRefreshEvents = pathname === '/' || pathname === '/simulation' || pathname === '/events';
+
+    if (!shouldRefreshEvents) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void fetchEvents();
+    }, 10000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [fetchEvents, pathname]);
+
   return (
     <div className="flex min-h-screen bg-[#F3F4F6] text-gray-900 font-sans">
       <div className="hidden w-64 md:flex md:flex-col bg-[#0F172A] text-white shrink-0 sticky top-0 h-screen">
