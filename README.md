@@ -6,6 +6,14 @@ The project addresses the errors and stale records common in manual and barcode-
 
 This repository contains the **frontend application**.
 
+## Demo video
+
+Watch the Smart RFID Inventory Tracking System demonstration:
+
+[![Watch the Smart RFID Inventory Tracking System demo](https://img.youtube.com/vi/-5AHoBTiLmA/maxresdefault.jpg)](https://youtu.be/-5AHoBTiLmA)
+
+[Open the demo on YouTube](https://youtu.be/-5AHoBTiLmA)
+
 ## Graduation project
 
 **Course:** ENCS5300 — Graduation Project
