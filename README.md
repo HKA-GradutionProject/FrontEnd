@@ -14,6 +14,20 @@ Watch the Smart RFID Inventory Tracking System demonstration:
 
 [Open the demo on YouTube](https://youtu.be/-5AHoBTiLmA)
 
+## Screenshots
+
+### Live RFID event monitoring
+
+The warehouse view displays RFID detections, item movements, reader zones, and the live WebSocket connection status.
+
+![Smart RFID warehouse view showing live RFID event activity](docs/images/warehouse-live-events.png)
+
+### Warehouse zone movement
+
+The 3D simulation visualizes an item's movement between warehouse shelves and records each zone transition in the event panel.
+
+![Smart RFID 3D warehouse showing an item moving between Shelf A and Shelf B](docs/images/warehouse-zone-movement.png)
+
 ## Graduation project
 
 **Course:** ENCS5300 — Graduation Project
